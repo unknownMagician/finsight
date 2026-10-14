@@ -18,9 +18,10 @@
 | F0 | Health checks (`/health/live`, `/health/ready`) | ✅ | 1 | `backend/tests/test_health.py`, `frontend/src/features/health/SystemStatus.test.tsx` |
 | F0 | Uniform error envelope + request IDs + JSON logging | ✅ | 1 | `backend/tests/test_health.py` |
 | F0 | Config via env, secrets masked | ✅ | 1 | `backend/tests/test_config.py` |
-| F0 | Alembic migration chain (baseline) | ✅ SQLite / 🟡 Postgres | 1 | `backend/tests/test_migrations.py` (Postgres variant runs in CI only) |
-| F0 | Docker Compose stack | 🟡 | 1 | `docker compose config` validated; images not yet built locally (Docker daemon unavailable) |
-| F0 | GitHub Actions CI | 🟡 | 1 | Workflow written; not yet run (no remote configured) |
+| F0 | Alembic migration chain (baseline) | ✅ | 1 | `backend/tests/test_migrations.py` — SQLite locally; PostgreSQL 17 in CI (16/16 passed, run 38623910065) |
+| F0 | Docker images | ✅ | 1 | Both images build in CI `docker` job |
+| F0 | Docker Compose stack (`up`) | 🟡 | 1 | `docker compose config` validated; full `up` not yet run (no local Docker daemon) |
+| F0 | GitHub Actions CI | ✅ | 1 | Green on `main` and `dev/claude` (github.com/unknownMagician/finsight) |
 | F1 | Company search & profiles | ⏳ | 3–4 | — |
 | F2 | Financial statements & ratios | ⏳ | 2–4 | — |
 | F3 | DCF valuation + sensitivity | ⏳ | 2–4 | — |
