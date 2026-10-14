@@ -5,7 +5,7 @@
 > this document disagree, the code is wrong or this document is stale — fix one of them in the
 > same change.
 
-- Last updated: 2026-10-15 (Phase 1 — foundation)
+- Last updated: 2026-10-15 (Phase 2 — financial domain engine)
 - Status legend: ✅ implemented & verified by tests · 🟡 implemented, not fully verified ·
   ⏳ planned (phase) · ❌ not started
 
@@ -23,10 +23,10 @@
 | F0 | Docker Compose stack (`up`) | 🟡 | 1 | `docker compose config` validated; full `up` not yet run (no local Docker daemon) |
 | F0 | GitHub Actions CI | ✅ | 1 | Green on `main` and `dev/claude` (github.com/unknownMagician/finsight) |
 | F1 | Company search & profiles | ⏳ | 3–4 | — |
-| F2 | Financial statements & ratios | ⏳ | 2–4 | — |
-| F3 | DCF valuation + sensitivity | ⏳ | 2–4 | — |
-| F4 | Comparable company valuation | ⏳ | 2–4 | — |
-| F5 | Forecasting (bull/base/bear) | ⏳ | 2–4 | — |
+| F2 | Statement domain models + ratio engine | ✅ engine · ⏳ API/UI (3–4) | 2 | `tests/domain/test_ratios.py`, `test_types_and_numeric.py` |
+| F3 | DCF engine + WACC + sensitivity | ✅ engine · ⏳ API/UI (3–4) | 2 | `tests/domain/test_dcf.py`, `test_wacc.py` |
+| F4 | Comparable company engine | ✅ engine · ⏳ API/UI (3–4) | 2 | `tests/domain/test_comps.py` |
+| F5 | Forecast engine (bull/base/bear) | ✅ engine · ⏳ API/UI (3–4) | 2 | `tests/domain/test_forecast.py` |
 | F6 | Annual report PDF upload & fact extraction | ⏳ | 5 | — |
 | F7 | AI research assistant with citations | ⏳ | 5 | — |
 | F8 | Research report generation & export | ⏳ | 6 | — |
@@ -63,8 +63,17 @@
 │   │   │   ├── base.py       # DeclarativeBase with naming convention
 │   │   │   └── session.py    # lazy engine/sessionmaker, get_db dependency
 │   │   ├── models/__init__.py# model registry for Alembic (no tables yet)
+│   │   ├── domain/           # PURE financial logic (no I/O; guarded by a test)
+│   │   │   ├── types.py      # Scale, ValueKind, ReportingPeriod, SourceRef, Issue
+│   │   │   ├── numeric.py    # mean / median / percentile on Decimal
+│   │   │   ├── statements.py # Income/Balance/CashFlow + FinancialPeriodData
+│   │   │   ├── ratios.py     # compute_ratios → RatioReport of MetricResult
+│   │   │   ├── wacc.py       # compute_wacc (CAPM)
+│   │   │   ├── dcf.py        # run_dcf, sensitivity, build_axis
+│   │   │   ├── forecast.py   # project, run_scenarios (bull/base/bear)
+│   │   │   └── comps.py      # analyze_comps (trading multiples)
 │   │   └── api/health.py     # /health/live, /health/ready
-│   ├── tests/                # pytest: health, config, migrations
+│   ├── tests/                # pytest: health, config, migrations; tests/domain/ engine tests
 │   └── Dockerfile
 └── frontend/
     ├── package.json          # Vite + React 19 + TS + Tailwind 4 + Router 8 + TanStack Query 5
@@ -80,9 +89,9 @@
         └── test/             # Vitest setup + render/fetch helpers
 ```
 
-Planned backend layout (to be confirmed as implemented): `app/domain/` (pure financial
-calculations, no I/O), `app/services/` (orchestration), `app/providers/` (market data, Claude
-adapter), `app/api/` (routers), `app/models/` (ORM), `app/schemas/` (Pydantic I/O).
+Planned additions (Phase 3+): `app/services/` (orchestration: load → domain → persist),
+`app/providers/` (market data, Claude adapter), `app/schemas/` (API I/O), ORM tables in
+`app/models/`.
 
 ---
 
@@ -229,14 +238,165 @@ are stored as missing (never zero-filled or invented).
 
 ⏳ Planned (Phase 3).
 
-## 9. Financial calculations
+## 9. Financial calculations (`backend/app/domain/`)
 
-⏳ Planned (Phase 2). Each formula will be listed here with its function name, inputs,
-validation rules, and test file. None are implemented yet.
+**Status:** pure engine implemented and unit-tested (Phase 2). Not yet exposed via API or
+persisted (Phase 3), so no real company data flows through it yet.
 
-## 10. DCF valuation & sensitivity
+### 9.1 Conventions (apply to every calculation)
 
-⏳ Planned (Phase 2).
+- **Numbers:** `Decimal` everywhere; no floats. Non-finite values (NaN/±Inf) rejected.
+  Full precision is kept; rounding is a presentation concern.
+- **Rates:** fractions (`0.08` = 8%). **Multiples ("times")** are plain ratios.
+- **Units:** each statement / DCF / forecast / comps object carries one `currency`
+  (ISO 4217) and one `scale` (`units|thousands|millions|billions`). Cross-object arithmetic
+  rescales via `types.rescale`; **different currencies are rejected** (FX conversion belongs
+  to the data layer with a documented rate source).
+- **Provenance:** `ValueKind` = `reported | calculated | assumption | forecast | ai_explanation`.
+  Statements default to `reported`; ratio outputs are `calculated`; forecast outputs are
+  `forecast`. Statements carry a `SourceRef` (provider, retrieved_at, url/document/page).
+- **Missing data:** `None` = not reported; never treated as 0. Derived totals require all
+  components (e.g. total debt needs both ST and LT debt unless total debt is reported).
+- **Validation:** structural and assumption errors → `pydantic.ValidationError` (or
+  `ValueError` for cross-object checks). Non-fatal concerns → `Issue{code, severity, message}`.
+- **Immutability:** all domain models are frozen with `extra="forbid"`.
+- **Purity:** `tests/domain/test_types_and_numeric.py` fails if any domain module imports
+  I/O libraries (fastapi, sqlalchemy, httpx, requests, os, random, app.db).
+
+### 9.2 Statement sign conventions (`statements.py`)
+
+| Field group | Convention |
+|---|---|
+| revenue, profits, cash flows | natural sign (losses negative) |
+| `interest_expense`, `capital_expenditures`, `dividends_paid`, `share_repurchases` | positive magnitude (≥ 0) |
+| balance-sheet assets, liabilities, debt | ≥ 0 |
+| `total_equity` | may be negative |
+| `shares_outstanding`, `diluted_shares` | > 0 |
+
+### 9.3 Ratios (`ratios.compute_ratios(data, prior=None) → RatioReport`)
+
+Each metric is a `MetricResult{value, unit, kind, formula, inputs, status, missing, note}`
+with `status ∈ ok | missing_inputs | not_meaningful`. Every division requires a **strictly
+positive denominator**, otherwise `not_meaningful` (e.g. ROE with negative equity).
+
+| Key | Formula | Unit |
+|---|---|---|
+| `gross_margin` | gross_profit ÷ revenue (gross_profit reported, else revenue − cost_of_revenue) | ratio |
+| `operating_margin` | operating_income ÷ revenue | ratio |
+| `ebitda` | operating_income + depreciation_amortization | currency |
+| `ebitda_margin` | ebitda ÷ revenue | ratio |
+| `net_margin` | net_income ÷ revenue | ratio |
+| `effective_tax_rate` | income_tax_expense ÷ pretax_income | ratio |
+| `return_on_equity` | net_income ÷ avg(total_equity)* | ratio |
+| `return_on_assets` | net_income ÷ avg(total_assets)* | ratio |
+| `asset_turnover` | revenue ÷ avg(total_assets)* | times |
+| `current_ratio` | total_current_assets ÷ total_current_liabilities | times |
+| `quick_ratio` | (total_current_assets − inventory) ÷ total_current_liabilities | times |
+| `total_debt` | reported total_debt, else short_term_debt + long_term_debt | currency |
+| `debt_to_equity` | total_debt ÷ total_equity | times |
+| `net_debt` | total_debt − cash_and_equivalents | currency |
+| `net_debt_to_ebitda` | net_debt ÷ ebitda | times |
+| `interest_coverage` | operating_income ÷ interest_expense | times |
+| `free_cash_flow` | operating_cash_flow − capital_expenditures | currency |
+| `fcf_margin` | free_cash_flow ÷ revenue | ratio |
+| `revenue_growth` | revenue ÷ prior_revenue − 1 (only with `prior`) | ratio |
+
+\* With `prior`: average of opening (prior, rescaled) and closing balance. Without `prior`:
+ending balance, stated in `note`. `prior` must be the same company and currency and must end
+before the current period.
+
+### 9.4 WACC (`wacc.compute_wacc`)
+
+```
+cost_of_equity         = risk_free_rate + beta × equity_risk_premium + size_premium
+after_tax_cost_of_debt = pre_tax_cost_of_debt × (1 − tax_rate)
+wacc                   = E/(D+E) × cost_of_equity + D/(D+E) × after_tax_cost_of_debt
+```
+
+Bounds: rf ∈ [−5%, 25%], ERP ∈ [0, 25%], beta ∈ [−2, 5], size premium ∈ [0, 15%],
+Kd ∈ [0, 50%], tax ∈ [0, 100%), E > 0, D ≥ 0. Result must be > 0 (else error). Warnings:
+`equity_cheaper_than_debt`, `unusual_wacc` (outside 4–20%). Weights should be market values.
+
+### 9.5 Forecast (`forecast.project`, `forecast.run_scenarios`)
+
+```
+revenue_t = revenue_{t−1} × (1 + revenue_growth_t)
+ebit_t    = revenue_t × ebit_margin_t
+taxes_t   = max(ebit_t, 0) × tax_rate            (no tax credit on losses)
+nopat_t   = ebit_t − taxes_t
+d_and_a_t = revenue_t × da_pct_revenue
+capex_t   = revenue_t × capex_pct_revenue
+nwc_t     = revenue_t × nwc_pct_revenue
+Δnwc_t    = nwc_t − nwc_{t−1}   (nwc_0 = base_nwc, else base_revenue × nwc_pct, recorded in notes)
+fcf_t     = nopat_t + d_and_a_t − capex_t − Δnwc_t
+```
+
+Validation: 1–30 years; growth ∈ (−100%, 500%]; margins ∈ [−100%, 100%]; tax ∈ [0, 100%);
+D&A and capex ∈ [0, 100%] of revenue; NWC ∈ [−100%, 100%]; growth and margin lists equal
+length. Scenarios `bull | base | bear`: base required, one shared horizon. Warnings
+`bull_below_base`, `bear_above_base` (final-year revenue). Outputs are `ValueKind.forecast`.
+
+### 9.6 Comparable companies (`comps.analyze_comps`)
+
+| Multiple | Formula |
+|---|---|
+| `ev_revenue` | EV ÷ revenue |
+| `ev_ebitda` | EV ÷ EBITDA |
+| `price_earnings` | market_cap ÷ net_income |
+| `price_book` | market_cap ÷ book_equity |
+
+EV = reported `enterprise_value`, else `market_cap + net_debt + other_claims` (requires
+`net_debt`). Peers are rescaled to the target's scale; mixed currencies, duplicate peers, or
+an empty peer list are rejected. A peer is **excluded with a recorded reason** for a multiple
+when an input is missing, the denominator ≤ 0, or it is the target itself. Stats per multiple:
+count, min, p25, median, mean, p75, max (percentiles use linear interpolation, numpy default).
+
+Implied target value at the peer **median** (low/high at p25/p75): EV multiples →
+`implied_ev = multiple × target_metric`, `equity = implied_ev − net_debt − other_claims`;
+equity multiples → `equity = multiple × target_metric`; `per_share = equity ÷
+shares_outstanding` (None if equity ≤ 0 or shares missing). Not applicable (with note) when the
+target metric is missing or ≤ 0, or `net_debt` is missing for the EV bridge. Warning
+`few_peers` when fewer than 3 usable peers.
+
+## 10. DCF valuation & sensitivity (`dcf.run_dcf`, `dcf.sensitivity`)
+
+Unlevered FCF (FCFF) DCF. Inputs (`DCFInputs`): `free_cash_flows` (1–30 years), `wacc`,
+`terminal_method`, `terminal_growth` | (`exit_multiple` + `terminal_ebitda`),
+`mid_year_convention`, `net_debt` (negative = net cash), `other_claims` (minority +
+preferred, ≥ 0), `shares_outstanding` (> 0), `currency`, `scale`.
+
+```
+discount_period_t = t   (t − 0.5 with mid-year convention)
+PV_t              = FCF_t / (1 + wacc)^discount_period_t
+TV (perpetuity)   = FCF_N × (1 + g) / (wacc − g)
+TV (exit)         = terminal_ebitda × exit_multiple
+PV(TV)            = TV / (1 + wacc)^N         (end of year N under both conventions)
+EV                = Σ PV_t + PV(TV)
+equity            = EV − net_debt − other_claims
+per_share         = equity / shares           (None when equity ≤ 0)
+tv_share          = PV(TV) / EV
+implied multiple  = TV / terminal_ebitda                  (perpetuity method, if EBITDA given)
+implied growth    = (TV × wacc − FCF_N) / (TV + FCF_N)    (exit method)
+```
+
+**Hard validation (input rejected):** 0 < wacc < 1. Perpetuity method: requires `g`, forbids
+`exit_multiple`, **g < wacc**, g ∈ (−50%, 50%), FCF_N × (1 + g) > 0. Exit method: requires
+`exit_multiple` ∈ (0, 100] and `terminal_ebitda`, forbids `g`. `terminal_ebitda` > 0.
+
+**Warnings (result still returned):** `high_terminal_growth` (g > 4%),
+`terminal_growth_near_wacc` (wacc − g < 2pp), `unusual_wacc` (outside 4–20%),
+`exit_multiple_implies_high_growth` (> 4%), `terminal_value_dominant` (PV(TV) > 75% of EV),
+`non_positive_enterprise_value`, `non_positive_equity_value`, `negative_fcf_years` (info).
+
+**Sensitivity:** `sensitivity(inputs, wacc_values, column_values, output)` re-validates and
+re-runs the DCF for each WACC × (terminal growth | exit multiple) cell; `output` is
+`value_per_share | enterprise_value | equity_value`. Invalid cells (e.g. g ≥ wacc) are `None`
+with the reason in `invalid_reasons["row,col"]`. Each axis ≤ 15 values;
+`build_axis(center, step, count)` builds symmetric odd-length axes.
+
+**Verified example** (`test_perpetuity_growth_hand_computed`): FCF 100/110/121, wacc 10%,
+g 2%, net debt 200, 10 shares → EV = 15750/11 ≈ 1431.82, equity ≈ 1231.82, ≈ 123.18/share,
+TV share = 17/21 ≈ 81% (flagged `terminal_value_dominant`).
 
 ## 11. PDF upload, extraction, chunking, retrieval
 

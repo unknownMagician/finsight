@@ -32,7 +32,8 @@ npm run build    # tsc --noEmit + vite build
 1. **Keep `SYSTEM_FLOW.md` in sync** with every change to endpoints, schemas, tables,
    calculations, providers, or security. Update the feature matrix status honestly.
 2. **Financial integrity**
-   - Financial calculations live in pure, deterministic backend functions with unit tests.
+   - Financial calculations live in `backend/app/domain/`: pure, deterministic, `Decimal`-only
+     functions with unit tests. No I/O imports there (a test enforces this).
    - Never invent market data, statements, or citations. Missing data stays missing.
    - Every figure carries source, currency, unit/scale, and period. Distinguish *reported*,
      *calculated*, *assumption*, *forecast*, and *AI explanation*.
@@ -52,6 +53,6 @@ npm run build    # tsc --noEmit + vite build
 
 ## Phase roadmap
 
-0 inspection & docs · 1 foundation (✅) · 2 financial domain engine · 3 APIs, auth, persistence ·
+0 inspection & docs (✅) · 1 foundation (✅) · 2 financial domain engine (✅) · 3 APIs, auth, persistence ·
 4 frontend workspace · 5 annual reports + Claude with citations · 6 reports & export ·
 7 verification & security audit.

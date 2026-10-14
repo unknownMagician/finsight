@@ -4,9 +4,10 @@ FinSight is a modular platform for company research: financial statement analysi
 calculations, DCF and comparable-company valuation, scenario forecasting, annual-report
 intelligence, and an AI research assistant that cites its sources.
 
-> **Status: Phase 1 (foundation).** The project skeleton, configuration, database migrations,
-> health checks, tests, Docker, and CI are in place. Financial features are not built yet — see
-> the feature matrix in [`SYSTEM_FLOW.md`](SYSTEM_FLOW.md).
+> **Status: Phase 2 (financial domain engine).** Foundation (config, migrations, health checks,
+> tests, Docker, CI) plus a tested calculation engine for ratios, WACC, DCF with sensitivity,
+> bull/base/bear forecasts, and comparable-company multiples. These are not yet exposed through
+> the API or UI (Phase 3–4) — see the feature matrix in [`SYSTEM_FLOW.md`](SYSTEM_FLOW.md).
 
 ## Stack
 
