@@ -19,4 +19,6 @@ USER finsight
 EXPOSE 8000
 
 # Apply migrations, then serve. Keep a single worker per container; scale with replicas.
+# FORWARDED_ALLOW_IPS (read by uvicorn) controls which peers may set X-Forwarded-For, which
+# per-IP rate limits rely on. Restrict it to your reverse proxy in production.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"]

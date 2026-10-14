@@ -32,7 +32,8 @@ npm run build    # tsc --noEmit + vite build
 1. **Keep `SYSTEM_FLOW.md` in sync** with every change to endpoints, schemas, tables,
    calculations, providers, or security. Update the feature matrix status honestly.
 2. **Financial integrity**
-   - Financial calculations live in pure, deterministic backend functions with unit tests.
+   - Financial calculations live in `backend/app/domain/`: pure, deterministic, `Decimal`-only
+     functions with unit tests. No I/O imports there (a test enforces this).
    - Never invent market data, statements, or citations. Missing data stays missing.
    - Every figure carries source, currency, unit/scale, and period. Distinguish *reported*,
      *calculated*, *assumption*, *forecast*, and *AI explanation*.
@@ -40,7 +41,10 @@ npm run build    # tsc --noEmit + vite build
 3. **Secrets** live only in backend env (`FINSIGHT_*`, read in `app/core/config.py`). Never in
    frontend code, never committed. `.env` is git-ignored; update `.env.example` with placeholders.
 4. **API conventions:** routes under `/api/v1`; Pydantic request/response models; errors raised
-   as `AppError(code, message, status_code)` so they use the standard envelope.
+   as `AppError(code, message, status_code)` so they use the standard envelope. Layering:
+   `api` → `services` → `models` / `providers` / `domain`. Every user-owned query filters by
+   `owner_id` and returns 404 for other users' resources; add a cross-user test for each new
+   owned resource. Tests never hit the network: use `tests/fakes.py` / `httpx.MockTransport`.
 5. **Database:** every schema change ships with an Alembic migration; the drift test must pass.
    Import new model modules in `app/models/__init__.py`.
 6. **Frontend:** call the API only through `src/lib/api.ts` (`apiFetch`) inside TanStack Query
@@ -52,6 +56,6 @@ npm run build    # tsc --noEmit + vite build
 
 ## Phase roadmap
 
-0 inspection & docs · 1 foundation (✅) · 2 financial domain engine · 3 APIs, auth, persistence ·
+0 inspection & docs (✅) · 1 foundation (✅) · 2 financial domain engine (✅) · 3 APIs, auth, persistence (✅) ·
 4 frontend workspace · 5 annual reports + Claude with citations · 6 reports & export ·
 7 verification & security audit.

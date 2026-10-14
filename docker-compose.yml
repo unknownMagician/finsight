@@ -28,6 +28,10 @@ services:
       FINSIGHT_CORS_ORIGINS: http://localhost:8080,http://localhost:5173
       FINSIGHT_ANTHROPIC_API_KEY: ${FINSIGHT_ANTHROPIC_API_KEY:-}
       FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET:-}
+      FINSIGHT_SEC_USER_AGENT: ${FINSIGHT_SEC_USER_AGENT:-}
+      # Which peers may set X-Forwarded-For (used for per-IP rate limits). "*" is acceptable
+      # here only because port 8000 is bound to 127.0.0.1; restrict it in production.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
     depends_on:
       db:
         condition: service_healthy

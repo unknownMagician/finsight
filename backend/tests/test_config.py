@@ -16,6 +16,14 @@ def test_secrets_are_masked_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "hunter2" not in repr(settings)
 
 
+def test_blank_secrets_mean_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FINSIGHT_JWT_SECRET", "")
+    monkeypatch.setenv("FINSIGHT_SEC_USER_AGENT", "  ")
+    settings = Settings(_env_file=None)
+    assert settings.jwt_secret is None
+    assert settings.sec_user_agent is None
+
+
 def test_invalid_environment_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FINSIGHT_ENVIRONMENT", "staging-typo")
     with pytest.raises(ValueError):

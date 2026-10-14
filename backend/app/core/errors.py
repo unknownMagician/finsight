@@ -24,12 +24,20 @@ logger = logging.getLogger("app.errors")
 class AppError(Exception):
     """Domain error with a stable machine-readable code."""
 
-    def __init__(self, code: str, message: str, status_code: int = 400, details: Any = None):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 400,
+        details: Any = None,
+        headers: dict[str, str] | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
         self.details = details
+        self.headers = headers
 
 
 def _request_id(request: Request) -> str | None:
@@ -37,24 +45,32 @@ def _request_id(request: Request) -> str | None:
 
 
 def _envelope(
-    request: Request, code: str, message: str, status_code: int, details: Any = None
+    request: Request,
+    code: str,
+    message: str,
+    status_code: int,
+    details: Any = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     request_id = _request_id(request)
     body: dict[str, Any] = {"code": code, "message": message, "request_id": request_id}
     if details is not None:
         body["details"] = details
-    headers = {"X-Request-ID": request_id} if request_id else None
+    headers = dict(extra_headers or {})
+    if request_id:
+        headers["X-Request-ID"] = request_id
     return JSONResponse(status_code=status_code, content={"error": body}, headers=headers)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
-        return _envelope(request, exc.code, exc.message, exc.status_code, exc.details)
+        return _envelope(request, exc.code, exc.message, exc.status_code, exc.details, exc.headers)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        return _envelope(request, "http_error", str(exc.detail), exc.status_code)
+        headers = dict(exc.headers) if exc.headers else None
+        return _envelope(request, "http_error", str(exc.detail), exc.status_code, None, headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
