@@ -4,10 +4,11 @@ FinSight is a modular platform for company research: financial statement analysi
 calculations, DCF and comparable-company valuation, scenario forecasting, annual-report
 intelligence, and an AI research assistant that cites its sources.
 
-> **Status: Phase 2 (financial domain engine).** Foundation (config, migrations, health checks,
-> tests, Docker, CI) plus a tested calculation engine for ratios, WACC, DCF with sensitivity,
-> bull/base/bear forecasts, and comparable-company multiples. These are not yet exposed through
-> the API or UI (Phase 3–4) — see the feature matrix in [`SYSTEM_FLOW.md`](SYSTEM_FLOW.md).
+> **Status: Phase 3 (backend APIs).** A tested calculation engine (ratios, WACC, DCF with
+> sensitivity, bull/base/bear forecasts, comparable companies), user accounts with JWT auth,
+> SEC EDGAR ingestion of annual 10-K financials, watchlists and saved valuations — all via the
+> REST API. The web UI for these arrives in Phase 4. See the feature matrix in
+> [`SYSTEM_FLOW.md`](SYSTEM_FLOW.md).
 
 ## Stack
 
@@ -52,6 +53,18 @@ cd frontend
 npm ci
 npm run dev                                  # http://localhost:5173 (proxies /api → :8000)
 ```
+
+### Loading real financial data (SEC EDGAR)
+
+Set `FINSIGHT_SEC_USER_AGENT` to something like `FinSight you@example.com` (SEC requires
+contact info), then either call `POST /api/v1/companies/{ticker}/ingest` with a bearer token or:
+
+```bash
+.venv/Scripts/python -m app.cli sync-companies     # company directory for search
+.venv/Scripts/python -m app.cli ingest AAPL MSFT   # annual financials
+```
+
+Try the API at http://localhost:8000/docs: register, log in, and click *Authorize* with the token.
 
 ## Tests & checks
 

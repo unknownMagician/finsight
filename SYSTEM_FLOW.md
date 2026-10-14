@@ -5,7 +5,7 @@
 > this document disagree, the code is wrong or this document is stale — fix one of them in the
 > same change.
 
-- Last updated: 2026-10-15 (Phase 2 — financial domain engine)
+- Last updated: 2026-10-15 (Phase 3 — APIs, auth, persistence, SEC EDGAR ingestion)
 - Status legend: ✅ implemented & verified by tests · 🟡 implemented, not fully verified ·
   ⏳ planned (phase) · ❌ not started
 
@@ -17,22 +17,25 @@
 |---|---------|--------|-------|--------------|
 | F0 | Health checks (`/health/live`, `/health/ready`) | ✅ | 1 | `backend/tests/test_health.py`, `frontend/src/features/health/SystemStatus.test.tsx` |
 | F0 | Uniform error envelope + request IDs + JSON logging | ✅ | 1 | `backend/tests/test_health.py` |
-| F0 | Config via env, secrets masked | ✅ | 1 | `backend/tests/test_config.py` |
-| F0 | Alembic migration chain (baseline) | ✅ | 1 | `backend/tests/test_migrations.py` — SQLite locally; PostgreSQL 17 in CI (16/16 passed, run 38623910065) |
+| F0 | Config via env, secrets masked, blank = unset | ✅ | 1, 3 | `backend/tests/test_config.py` |
+| F0 | Alembic migrations (0001 baseline, 0002 core tables) | ✅ SQLite · CI Postgres | 1, 3 | `tests/test_migrations.py` (round-trip, drift guard); every API test migrates up/down |
 | F0 | Docker images | ✅ | 1 | Both images build in CI `docker` job |
 | F0 | Docker Compose stack (`up`) | 🟡 | 1 | `docker compose config` validated; full `up` not yet run (no local Docker daemon) |
-| F0 | GitHub Actions CI | ✅ | 1 | Green on `main` and `dev/claude` (github.com/unknownMagician/finsight) |
-| F1 | Company search & profiles | ⏳ | 3–4 | — |
-| F2 | Statement domain models + ratio engine | ✅ engine · ⏳ API/UI (3–4) | 2 | `tests/domain/test_ratios.py`, `test_types_and_numeric.py` |
-| F3 | DCF engine + WACC + sensitivity | ✅ engine · ⏳ API/UI (3–4) | 2 | `tests/domain/test_dcf.py`, `test_wacc.py` |
-| F4 | Comparable company engine | ✅ engine · ⏳ API/UI (3–4) | 2 | `tests/domain/test_comps.py` |
-| F5 | Forecast engine (bull/base/bear) | ✅ engine · ⏳ API/UI (3–4) | 2 | `tests/domain/test_forecast.py` |
+| F0 | GitHub Actions CI | ✅ | 1 | Green on `main` and `dev/claude` |
+| F1 | Company directory, search, profile API | ✅ API · ⏳ UI (4) | 3 | `tests/test_companies_api.py` |
+| F1 | SEC EDGAR ingestion (annual 10-K, US-GAAP) | ✅ API/CLI · ⏳ UI (4) | 3 | `tests/test_edgar.py` (synthetic fixture + mocked HTTP); manual live smoke test 2026-10-15: AAPL/MSFT/JPM, AAPL FY2024 figures matched the 10-K |
+| F2 | Statement models + ratio engine | ✅ engine · ✅ API · ⏳ UI (4) | 2, 3 | `tests/domain/test_ratios.py`, `tests/test_companies_api.py` |
+| F3 | DCF + WACC + sensitivity | ✅ engine · ✅ API · ⏳ UI (4) | 2, 3 | `tests/domain/test_dcf.py`, `test_wacc.py`, `tests/test_calculations_api.py` |
+| F4 | Comparable companies | ✅ engine · ✅ API (user-supplied peer metrics) · ⏳ UI (4) | 2, 3 | `tests/domain/test_comps.py`, `tests/test_calculations_api.py` |
+| F5 | Forecast (bull/base/bear) | ✅ engine · ✅ API · ⏳ UI (4) | 2, 3 | `tests/domain/test_forecast.py`, `tests/test_calculations_api.py` |
+| F5 | Saved DCF valuations (owner-scoped) | ✅ API · ⏳ UI (4) | 3 | `tests/test_valuations_api.py` |
 | F6 | Annual report PDF upload & fact extraction | ⏳ | 5 | — |
 | F7 | AI research assistant with citations | ⏳ | 5 | — |
 | F8 | Research report generation & export | ⏳ | 6 | — |
-| F9 | Watchlists & personalized dashboard | ⏳ | 3–4 | — |
-| S1 | Authentication & resource-level authorization | ⏳ | 3 | — |
-| S2 | Rate limiting | ⏳ | 3 | — |
+| F9 | Watchlists (owner-scoped CRUD) | ✅ API · ⏳ UI/dashboard (4) | 3 | `tests/test_watchlists_api.py` |
+| S1 | Authentication (Argon2id + JWT) & resource-level authorization | ✅ | 3 | `tests/test_auth_api.py`, `test_security.py`, cross-user tests in watchlist/valuation suites |
+| S2 | Rate limiting (in-process) | ✅ single process · ⏳ shared store for multi-replica | 3 | `tests/test_security.py`, `test_auth_api.py`, `test_calculations_api.py` |
+| — | Market prices / market cap feed | ❌ | — | Not integrated: no live price data exists in the system. Comps and DCF take market inputs from the user. |
 
 ---
 
@@ -51,47 +54,42 @@
 │   ├── alembic.ini
 │   ├── alembic/
 │   │   ├── env.py            # reads URL from app settings
-│   │   └── versions/0001_baseline.py
+│   │   └── versions/         # 0001_baseline.py, 0002_core_tables.py
 │   ├── app/
-│   │   ├── main.py           # create_app(): middleware, handlers, routers
+│   │   ├── main.py           # create_app(): middleware, handlers, rate limiter, routers
+│   │   ├── cli.py            # python -m app.cli sync-companies | ingest TICKER...
+│   │   ├── schemas.py        # API request/response models (transport layer)
 │   │   ├── core/
 │   │   │   ├── config.py     # Settings (pydantic-settings, FINSIGHT_* env)
 │   │   │   ├── logging.py    # JSON formatter, request_id context var
 │   │   │   ├── middleware.py # RequestContextMiddleware (request ID + access log)
-│   │   │   └── errors.py     # AppError + exception handlers → error envelope
+│   │   │   ├── errors.py     # AppError(code, message, status, details, headers) → envelope
+│   │   │   ├── security.py   # Argon2id hashing, JWT create/decode, secret validation
+│   │   │   └── ratelimit.py  # in-process sliding-window RateLimiter
 │   │   ├── db/
 │   │   │   ├── base.py       # DeclarativeBase with naming convention
 │   │   │   └── session.py    # lazy engine/sessionmaker, get_db dependency
-│   │   ├── models/__init__.py# model registry for Alembic (no tables yet)
-│   │   ├── domain/           # PURE financial logic (no I/O; guarded by a test)
-│   │   │   ├── types.py      # Scale, ValueKind, ReportingPeriod, SourceRef, Issue
-│   │   │   ├── numeric.py    # mean / median / percentile on Decimal
-│   │   │   ├── statements.py # Income/Balance/CashFlow + FinancialPeriodData
-│   │   │   ├── ratios.py     # compute_ratios → RatioReport of MetricResult
-│   │   │   ├── wacc.py       # compute_wacc (CAPM)
-│   │   │   ├── dcf.py        # run_dcf, sensitivity, build_axis
-│   │   │   ├── forecast.py   # project, run_scenarios (bull/base/bear)
-│   │   │   └── comps.py      # analyze_comps (trading multiples)
-│   │   └── api/health.py     # /health/live, /health/ready
-│   ├── tests/                # pytest: health, config, migrations; tests/domain/ engine tests
+│   │   ├── models/           # ORM: user, company (+ periods, line items), watchlist, valuation
+│   │   ├── domain/           # PURE financial logic (no I/O; guarded by a test) — see §9–10
+│   │   ├── providers/
+│   │   │   ├── base.py       # FinancialDataProvider protocol + DTOs + ProviderError
+│   │   │   ├── edgar_normalize.py # pure: companyfacts JSON → annual line items
+│   │   │   └── sec_edgar.py  # HTTP client: directory, companyfacts, retries
+│   │   ├── services/         # auth, companies (ingest/ratios), watchlists, valuations
+│   │   └── api/
+│   │       ├── deps.py       # DbSession, CurrentUser, rate-limit deps, Provider
+│   │       ├── health.py, auth.py, companies.py, calculations.py,
+│   │       └── watchlists.py, valuations.py
+│   ├── tests/                # API/integration tests; tests/domain/ engine tests;
+│   │                         # fakes.py (FakeProvider), fixtures_edgar.py (SYNTHETIC data)
 │   └── Dockerfile
-└── frontend/
-    ├── package.json          # Vite + React 19 + TS + Tailwind 4 + Router 8 + TanStack Query 5
-    ├── vite.config.ts        # dev proxy /api → backend; Vitest config
-    ├── nginx.conf            # prod: static SPA + /api reverse proxy
-    ├── Dockerfile
-    └── src/
-        ├── main.tsx          # QueryClientProvider + RouterProvider
-        ├── app/              # routes, Layout, queryClient defaults
-        ├── lib/api.ts        # apiFetch + ApiError (parses error envelope)
-        ├── features/health/  # useLiveness/useReadiness hooks, SystemStatus card
-        ├── pages/            # HomePage, NotFoundPage
-        └── test/             # Vitest setup + render/fetch helpers
+└── frontend/                 # unchanged since Phase 1 (UI work is Phase 4)
+    ├── vite.config.ts, nginx.conf, Dockerfile
+    └── src/ (app/, lib/api.ts, features/health/, pages/, test/)
 ```
 
-Planned additions (Phase 3+): `app/services/` (orchestration: load → domain → persist),
-`app/providers/` (market data, Claude adapter), `app/schemas/` (API I/O), ORM tables in
-`app/models/`.
+Layering rule: `api` → `services` → (`models`, `providers`, `domain`). `domain` imports nothing
+from the other layers. `providers` return DTOs, never ORM objects.
 
 ---
 
@@ -106,142 +104,353 @@ flowchart LR
         NGINX[nginx :80<br/>static + /api proxy]
         VITE[Vite dev server :5173<br/>/api proxy]
     end
-    subgraph Backend
-        MW[RequestContextMiddleware<br/>request ID, access log]
-        API[FastAPI routers /api/v1]
-        EH[Exception handlers<br/>error envelope]
+    subgraph Backend[FastAPI process]
+        MW[RequestContextMiddleware]
+        DEPS[deps: auth · rate limit · provider]
+        API[routers /api/v1]
+        SVC[services]
+        DOM[domain engine<br/>pure, Decimal]
+        PROV[providers]
     end
     DB[(PostgreSQL 17)]
+    SEC[[SEC EDGAR<br/>data.sec.gov / sec.gov]]
     CLAUDE[[Claude API<br/>⏳ Phase 5]]
-    MKT[[Market data provider<br/>⏳ Phase 3]]
+    CLI[app.cli]
 
     SPA -- same-origin /api --> NGINX
     SPA -. dev .-> VITE
     NGINX --> MW
     VITE --> MW
-    MW --> API
-    API --> EH
-    API --> DB
-    API -.-> CLAUDE
-    API -.-> MKT
+    MW --> DEPS --> API --> SVC
+    SVC --> DOM
+    SVC --> DB
+    SVC --> PROV --> SEC
+    CLI --> SVC
+    SVC -.-> CLAUDE
 ```
 
 **Security boundary:** the browser only ever calls same-origin `/api/v1/*`. All secrets
-(`FINSIGHT_DATABASE_URL`, `FINSIGHT_ANTHROPIC_API_KEY`, `FINSIGHT_JWT_SECRET`) live in the
-backend process environment. The frontend bundle contains no credentials and no provider URLs.
+(`FINSIGHT_DATABASE_URL`, `FINSIGHT_JWT_SECRET`, `FINSIGHT_ANTHROPIC_API_KEY`) and the SEC
+User-Agent live in the backend process environment. The frontend bundle contains no
+credentials and no provider URLs. Only the backend talks to SEC EDGAR.
 
 ---
 
 ## 4. Request flows
 
-### 4.1 Health check (implemented)
+### 4.1 Health check
 
 ```mermaid
 sequenceDiagram
     participant UI as SystemStatus (React)
-    participant Q as TanStack Query
     participant P as Vite/nginx proxy
     participant M as RequestContextMiddleware
     participant H as health.readiness
     participant DB as PostgreSQL
-
-    UI->>Q: useReadiness()
-    Q->>P: GET /api/v1/health/ready
+    UI->>P: GET /api/v1/health/ready
     P->>M: forward
     M->>M: request_id = safe X-Request-ID or uuid4
     M->>H: call route (get_db session)
     H->>DB: SELECT 1
     alt DB reachable
-        H-->>M: 200 {status:"ok", checks:{database:"ok"}}
+        H-->>UI: 200 {status:"ok", checks:{database:"ok"}}
     else DB error
-        H-->>M: 503 {status:"unavailable", checks:{database:"error"}}
+        H-->>UI: 503 {status:"unavailable", checks:{database:"error"}}
     end
-    M-->>Q: response + X-Request-ID header, access log line
-    Q-->>UI: data → "Connected" / "Unavailable" badge (refetch every 30s)
 ```
 
-- **Origin:** browser query on page load.
-- **Validation:** none needed (no input). Response typed by `ReadinessResponse` (Pydantic) and
-  mirrored by the TS interface in `frontend/src/features/health/api.ts`.
-- **Functions:** `app.api.health.readiness` → `app.db.session.check_database`.
-- **Tables:** none (connectivity probe only).
-- **Note:** `useReadiness` treats 503 as a valid answer (reads the body) rather than an error.
+Functions: `api.health.readiness` → `db.session.check_database`. Tables: none. The frontend
+treats 503 as a valid "not ready" answer.
 
-### 4.2 Error flow (implemented)
+### 4.2 Error flow
 
-1. Any exception raised inside a route is caught by a handler in `app/core/errors.py`:
-   - `AppError` → its own `code`/`status_code`.
-   - `HTTPException` (e.g. 404) → `code: "http_error"`.
-   - `RequestValidationError` → 422, `code: "validation_error"`, `details: [{loc,msg,type}]`.
-   - Any other `Exception` → logged with stack trace; client receives 500
-     `code: "internal_error"` and a generic message (no internals).
-2. Every envelope includes `request_id`, equal to the `X-Request-ID` response header.
-   Unhandled 500s run in Starlette's outer `ServerErrorMiddleware`, so the middleware also
-   stores the ID on `scope["state"]` for that handler to read.
-3. Frontend `apiFetch` converts non-2xx into `ApiError{status, code, message, requestId, details}`;
-   network failure → `status: 0, code: "network_error"`. TanStack Query does not retry 4xx.
+1. Exceptions inside a route are handled in `app/core/errors.py`:
+   `AppError` → its `code`/`status_code`/`headers`; `HTTPException` → `http_error`;
+   `RequestValidationError` → 422 `validation_error` with `details: [{loc,msg,type}]`
+   (input values are **not** echoed back); anything else → logged with stack trace, client gets
+   500 `internal_error` with a generic message.
+2. Every envelope carries `request_id` = the `X-Request-ID` header (also for 500s, via
+   `scope["state"]`).
+3. Frontend `apiFetch` maps non-2xx to `ApiError{status, code, message, requestId, details}`.
+
+### 4.3 Registration and login
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant RL as limit_by_ip("auth")
+    participant R as api.auth
+    participant S as services.auth
+    participant DB as users
+    C->>RL: POST /auth/register {email, password, display_name?}
+    RL->>R: allowed (≤ FINSIGHT_RATE_LIMIT_AUTH_PER_MINUTE per IP)
+    R->>S: register(): lower-case email, uniqueness check
+    S->>DB: INSERT users (password_hash = Argon2id)
+    S-->>C: 201 UserOut (no hash) · 409 email_already_registered
+    C->>RL: POST /auth/login {email, password}
+    R->>S: authenticate(): verify hash (dummy hash if user unknown → uniform timing)
+    S-->>C: 200 {access_token (JWT HS256), token_type:"bearer", expires_in}<br/>or 401 invalid_credentials (same message for unknown user / wrong password / inactive)
+```
+
+Subsequent requests send `Authorization: Bearer <token>`. `deps.get_current_user` decodes the
+token (`exp`, `iat`, `sub` required, `type == "access"`, algorithm pinned to HS256), loads the
+user, and rejects missing/inactive users with 401 `not_authenticated` + `WWW-Authenticate:
+Bearer`.
+
+### 4.4 Ingest a company's annual financials
+
+```mermaid
+sequenceDiagram
+    participant C as Client (authenticated)
+    participant RL as limit_by_user("ingest")
+    participant R as api.companies.ingest_company
+    participant S as services.companies.ingest
+    participant P as SecEdgarProvider
+    participant SEC as SEC EDGAR
+    participant N as edgar_normalize (pure)
+    participant DB as companies / financial_periods / financial_line_items
+    C->>RL: POST /companies/{ticker}/ingest
+    RL->>R: ≤ FINSIGHT_RATE_LIMIT_INGEST_PER_HOUR per user
+    R->>S: ingest(db, provider, ticker)
+    S->>P: lookup(ticker)
+    P->>SEC: GET sec.gov/files/company_tickers_exchange.json (cached 24h)
+    S->>P: fetch_annual_financials(listing)
+    P->>SEC: GET data.sec.gov/api/xbrl/companyfacts/CIK##########.json (retries)
+    P->>N: normalize_companyfacts(doc)
+    N-->>P: periods[] of line items (+ concept, accession) and warnings
+    P-->>S: IngestionResult(provider, source_url, retrieved_at, periods, warnings)
+    S->>DB: upsert company; per (fiscal_year, FY): upsert period, replace its line items
+    S-->>C: 200 {company, periods_ingested, fiscal_years, warnings}
+```
+
+- **Origin:** SEC EDGAR public XBRL API (data as filed by the company).
+- **Validation/transformation:** see §8. Values violating domain sign conventions are dropped
+  and reported in `warnings`; nothing is derived or estimated at ingest time.
+- **Errors:** unknown ticker → 404 `company_not_found`; provider down/5xx/malformed → 502
+  `provider_unavailable` (provider details logged, not returned); `FINSIGHT_SEC_USER_AGENT`
+  unset → 503 `provider_not_configured`.
+- **Idempotency:** re-ingesting replaces a period's line items; it never duplicates them.
+- **Synchronous:** runs inside the request (one or two HTTP calls, 15 s timeout each). No
+  background job queue exists yet.
+
+### 4.5 Ratios for a stored company
+
+`GET /companies/{ticker}/ratios?fiscal_year=` → `services.companies.ratios` loads FY periods
+(`financial_periods` + `financial_line_items`), picks the requested year (default latest) and
+`fiscal_year − 1` as prior if stored, converts both with `to_domain()` into
+`FinancialPeriodData` (re-validated by the domain models), and returns
+`domain.ratios.compute_ratios(...)` → `RatioReport` (each metric with formula, inputs, status).
+404 `no_financial_data` if the year is not stored.
+
+### 4.6 Calculators and saved valuations
+
+`POST /calculations/{wacc|dcf|dcf/sensitivity|forecast|comps}`: the request body **is** the
+domain input model (validated by Pydantic, including `g < WACC` etc.); the route calls the pure
+engine and returns the domain result. Cross-object rule violations (e.g. mixed peer
+currencies, missing base scenario) → 422 `invalid_assumptions`. Nothing is persisted.
+
+`POST /valuations {name, ticker?, inputs: DCFInputs}` re-runs `run_dcf` **server-side** and
+stores `inputs` and `result` as JSON (Decimals as strings) with `engine_version`. Clients cannot
+submit a result (`extra="forbid"` → 422).
+
+### 4.7 Watchlists
+
+`/watchlists` CRUD and `/watchlists/{id}/items` add/remove by ticker (company must already be
+stored, else 404 `company_not_found`). Every query filters by `owner_id = current_user.id`; a
+watchlist owned by someone else is indistinguishable from a missing one (404).
 
 ---
 
-## 5. API reference (implemented)
+## 5. API reference
 
-Base path: `/api/v1`. OpenAPI at `/openapi.json`, Swagger UI at `/docs` (disabled when
-`FINSIGHT_ENVIRONMENT=production`).
+Base path `/api/v1`. OpenAPI at `/openapi.json`, Swagger UI at `/docs` (both disabled when
+`FINSIGHT_ENVIRONMENT=production`). All amounts in responses are **JSON strings** (exact
+decimals); requests may send numbers or strings. "Auth" = Bearer token required.
 
-| Method | Path | Auth | Response 200 | Other |
-|--------|------|------|--------------|-------|
-| GET | `/health/live` | none | `LivenessResponse {status:"ok", service, version, environment}` | — |
-| GET | `/health/ready` | none | `ReadinessResponse {status:"ok", checks:{database:"ok"}}` | 503 same schema with `"unavailable"`/`"error"` |
+| Method | Path | Auth | Rate limit | Request | Response |
+|---|---|---|---|---|---|
+| GET | `/health/live` | — | — | — | `LivenessResponse` |
+| GET | `/health/ready` | — | — | — | `ReadinessResponse` (200/503) |
+| POST | `/auth/register` | — | auth/IP | `RegisterRequest {email, password (12–128), display_name?}` | 201 `UserOut`; 409 |
+| POST | `/auth/login` | — | auth/IP | `LoginRequest {email, password}` | `TokenResponse`; 401 |
+| GET | `/auth/me` | ✓ | — | — | `UserOut` |
+| GET | `/companies?q=&limit=` | ✓ | — | q 1–100 chars, limit 1–50 | `CompanyOut[]` (exact ticker, then ticker prefix, then name) |
+| GET | `/companies/{ticker}` | ✓ | — | — | `CompanyOut`; 404 |
+| POST | `/companies/{ticker}/ingest` | ✓ | ingest/user | — | `IngestOut`; 404/502/503 |
+| GET | `/companies/{ticker}/financials` | ✓ | — | — | `FinancialsOut {company, periods[{…, source, line_items[{statement,item,value,source_concept,source_accession}]}]}` |
+| GET | `/companies/{ticker}/ratios?fiscal_year=` | ✓ | — | — | `RatioReport`; 404 |
+| POST | `/calculations/wacc` | ✓ | compute/user | `WACCInputs` | `WACCResult` |
+| POST | `/calculations/dcf` | ✓ | compute/user | `DCFInputs` | `DCFResult` |
+| POST | `/calculations/dcf/sensitivity` | ✓ | compute/user | `{inputs, wacc_values[≤15], column_values[≤15], output}` | `SensitivityTable` |
+| POST | `/calculations/forecast` | ✓ | compute/user | `{base: ForecastBase, scenarios: {bull?, base, bear?}}` | `ScenarioSetResult` |
+| POST | `/calculations/comps` | ✓ | compute/user | `{target, peers[1–50], multiples[]}` | `CompsResult` |
+| GET | `/watchlists` | ✓ | — | — | `WatchlistOut[]` |
+| POST | `/watchlists` | ✓ | — | `{name}` | 201 `WatchlistOut`; 409 name taken / limit |
+| GET/PATCH/DELETE | `/watchlists/{id}` | ✓ owner | — | PATCH `{name}` | `WatchlistOut` / 204; 404 |
+| POST | `/watchlists/{id}/items` | ✓ owner | — | `{ticker}` | `WatchlistOut` (idempotent) |
+| DELETE | `/watchlists/{id}/items/{ticker}` | ✓ owner | — | — | `WatchlistOut`; 404 |
+| GET | `/valuations` | ✓ | — | — | `SavedValuationOut[]` (newest first) |
+| POST | `/valuations` | ✓ | compute/user | `{name, ticker?, inputs: DCFInputs}` | 201 `SavedValuationOut` |
+| GET/DELETE | `/valuations/{id}` | ✓ owner | — | — | `SavedValuationOut` / 204; 404 |
+
+Schemas live in `app/schemas.py` (transport) and `app/domain/*` (calculator I/O). Per-user
+limits: 20 watchlists, 100 companies per watchlist, 200 saved valuations.
 
 Error envelope (all non-2xx):
 
 ```json
 {"error": {"code": "validation_error", "message": "Request validation failed",
-           "request_id": "6f1c…", "details": [{"loc": ["query","n"], "msg": "…", "type": "…"}]}}
+           "request_id": "6f1c…", "details": [{"loc": ["body","wacc"], "msg": "…", "type": "…"}]}}
 ```
+
+Error codes: `validation_error`, `invalid_assumptions`, `not_authenticated`,
+`invalid_credentials`, `email_already_registered`, `rate_limited` (+ `Retry-After`),
+`not_found`, `company_not_found`, `no_financial_data`, `watchlist_name_taken`,
+`limit_exceeded`, `provider_unavailable`, `provider_not_configured`, `http_error`,
+`internal_error`.
 
 ---
 
 ## 6. Database
 
-- Engine: PostgreSQL 17 (driver `psycopg` 3). Tests default to SQLite for speed; CI also runs
-  the suite against a Postgres service via `TEST_DATABASE_URL`.
-- Migrations: Alembic, linear chain, one head (enforced by `test_single_head`).
-- Constraint naming convention defined in `app/db/base.py` for deterministic migrations.
-- Drift guard: `test_models_match_migrations` fails if ORM models and migrations differ.
+- PostgreSQL 17 (psycopg 3). Tests use SQLite by default; CI runs the full suite on Postgres.
+- Alembic, linear chain, single head; every API test upgrades to head and downgrades to base.
+- Drift guard `test_models_match_migrations`; naming convention in `app/db/base.py`.
+- Amounts: `NUMERIC(28, 6)`. Timestamps: `timestamptz`, server default `now()`.
 
-| Revision | Description | Tables |
-|----------|-------------|--------|
-| `0001` | Baseline — establishes the chain | *(none; only `alembic_version`)* |
+| Revision | Description |
+|---|---|
+| `0001` | Baseline (no tables) |
+| `0002` | users, companies, financial_periods, financial_line_items, watchlists, watchlist_items, saved_valuations |
 
 ```mermaid
 erDiagram
-    ALEMBIC_VERSION {
-        varchar version_num PK
+    USERS ||--o{ WATCHLISTS : owns
+    USERS ||--o{ SAVED_VALUATIONS : owns
+    WATCHLISTS ||--o{ WATCHLIST_ITEMS : contains
+    COMPANIES ||--o{ WATCHLIST_ITEMS : "listed in"
+    COMPANIES ||--o{ FINANCIAL_PERIODS : reports
+    FINANCIAL_PERIODS ||--o{ FINANCIAL_LINE_ITEMS : has
+    COMPANIES |o--o{ SAVED_VALUATIONS : "subject of"
+
+    USERS {
+        uuid id PK
+        varchar email UK "lower-cased"
+        varchar password_hash "argon2id"
+        varchar display_name
+        bool is_active
+    }
+    COMPANIES {
+        int id PK
+        varchar ticker UK "upper-case"
+        varchar cik UK "10-digit"
+        varchar name
+        varchar exchange
+        timestamptz last_ingested_at
+    }
+    FINANCIAL_PERIODS {
+        int id PK
+        int company_id FK
+        int fiscal_year "UK with company, fiscal_period"
+        varchar fiscal_period "FY"
+        date period_start
+        date period_end
+        varchar currency
+        varchar scale
+        varchar kind "reported"
+        varchar source_provider
+        varchar source_url
+        timestamptz retrieved_at
+    }
+    FINANCIAL_LINE_ITEMS {
+        int id PK
+        int period_id FK "UK with statement, item"
+        varchar statement "income|balance|cash_flow"
+        varchar item "domain field name"
+        numeric value
+        varchar source_concept "e.g. us-gaap:Revenues"
+        varchar source_accession "SEC filing"
+    }
+    WATCHLISTS {
+        uuid id PK
+        uuid owner_id FK "UK with name"
+        varchar name
+    }
+    WATCHLIST_ITEMS {
+        int id PK
+        uuid watchlist_id FK "UK with company_id"
+        int company_id FK
+    }
+    SAVED_VALUATIONS {
+        uuid id PK
+        uuid owner_id FK
+        int company_id FK "nullable, SET NULL"
+        varchar name
+        varchar method "dcf"
+        json inputs
+        json result
+        varchar engine_version
     }
 ```
 
-Domain tables (users, companies, filings, statements, line items, valuations, documents,
-chunks, watchlists, reports) are ⏳ planned for Phases 2–6 and will be documented here when
-their migrations exist.
+Deletes cascade from users → watchlists/valuations, companies → periods → line items, and
+watchlists → items. User-facing resources use UUID keys (no enumerable IDs).
 
 ---
 
 ## 7. External financial data providers
 
-⏳ Planned (Phase 3). No provider is integrated; **the system currently holds no market data or
-financial statements.** Requirements for whichever provider is chosen: every stored figure
-records source, retrieval timestamp, currency, unit/scale, and reporting period; missing values
-are stored as missing (never zero-filled or invented).
+| Provider | Status | Data | Access |
+|---|---|---|---|
+| SEC EDGAR (`app/providers/sec_edgar.py`) | ✅ | Company directory (`company_tickers_exchange.json`), XBRL companyfacts (annual 10-K / 10-K/A, US-GAAP, USD) | Public; requires `FINSIGHT_SEC_USER_AGENT` with contact info (SEC fair-access policy, < 10 req/s) |
+| Market prices / market cap | ❌ | — | None. The system has **no** price data; DCF/comps market inputs come from the user. |
 
-## 8. Data ingestion & normalization
+Client behaviour: 15 s timeout (`FINSIGHT_SEC_TIMEOUT_SECONDS`); retries up to 3 times on
+429/500/502/503/504 and transport errors with exponential backoff 0.5 s, 1 s, 2 s (or
+`Retry-After`, capped at 10 s); 404 → `ProviderNotFoundError`; other 4xx / malformed JSON →
+`ProviderError`. Redirects are not followed. The directory is cached in-process for 24 h.
 
-⏳ Planned (Phase 3).
+The provider sits behind the `FinancialDataProvider` protocol (`lookup`, `list_companies`,
+`fetch_annual_financials`), so another source can be added without touching services or API.
+
+## 8. Data ingestion & normalization (`app/providers/edgar_normalize.py`)
+
+Pure function `normalize_companyfacts(doc, max_years=10)`:
+
+1. **Scope:** `facts["us-gaap"]` only; facts with `form ∈ {10-K, 10-K/A}` and `fp == "FY"`.
+   Foreign filers (20-F, IFRS) and quarterly data are not ingested yet.
+2. **Fiscal periods:** for each filing (accession), the period end is the latest `end` among its
+   full-year duration facts, labelled with that filing's `fy`. Prior-year comparatives inside a
+   10-K therefore never create mislabelled periods. Later filings win ties (amendments).
+3. **Durations vs instants:** income and cash-flow items must span 350–380 days (52/53-week
+   years; quarter-only facts inside a 10-K are ignored). Balance-sheet items are instants at the
+   period end.
+4. **Concept mapping:** each domain field has an ordered list of US-GAAP concepts (e.g. revenue:
+   `RevenueFromContractWithCustomerExcludingAssessedTax` → `Revenues` → `SalesRevenueNet` → …;
+   full table in `MAPPINGS`). First concept with a value for that period wins; units must be
+   `USD` (`shares` for share counts, `USD/shares` for EPS).
+5. **Restatements:** if several filings report the same concept/period, the most recently filed
+   value wins and its accession number is stored with the line item.
+6. **Validation:** each statement is validated by its domain model; values that break sign
+   conventions (e.g. negative capex) are **dropped with a warning**, never coerced.
+7. **No invention:** absent concepts give absent fields. Nothing is derived at ingest
+   (e.g. gross profit is only stored if reported; the ratio engine derives it transparently).
+8. Output periods: newest first, at most `max_years`, one per fiscal year; currency `USD`,
+   scale `units`, kind `reported`.
+
+**Known gaps found on live data (2026-10-15 smoke test):**
+- Companies that report short-term debt only as `CommercialPaper` + `LongTermDebtCurrent`
+  (e.g. AAPL) have no `short_term_debt`, so `total_debt`/`net_debt` are `missing_inputs`.
+- Banks (e.g. JPM) do not report `GrossProfit`/`OperatingIncomeLoss`; margin-type ratios are
+  `missing_inputs`. Industry-specific mappings are future work.
+
+Operational CLI: `python -m app.cli sync-companies` (loads ~10k directory rows into
+`companies` so search works before ingestion) and `python -m app.cli ingest AAPL MSFT …`.
 
 ## 9. Financial calculations (`backend/app/domain/`)
 
-**Status:** pure engine implemented and unit-tested (Phase 2). Not yet exposed via API or
-persisted (Phase 3), so no real company data flows through it yet.
+**Status:** pure engine (Phase 2), exposed via `/calculations/*` and `/companies/{ticker}/ratios`
+(Phase 3). Ratios run on stored SEC EDGAR data; DCF/forecast/comps run on user-supplied inputs.
 
 ### 9.1 Conventions (apply to every calculation)
 
@@ -420,9 +629,49 @@ Implemented:
 - nginx adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`.
 - Compose binds ports to `127.0.0.1` and requires `POSTGRES_PASSWORD`.
 - Backend container runs as non-root user `finsight` (uid 10001).
+- Blank secret env values (`FOO=` / `${FOO:-}`) are treated as unset, not as empty secrets.
 
-⏳ Planned (Phase 3): user accounts, password hashing, JWT/session auth, per-resource ownership
-checks, rate limiting.
+**Authentication** (`app/core/security.py`, `app/api/deps.py`):
+- Passwords: Argon2id (`argon2-cffi` defaults), 12–128 chars. Hashes are never returned.
+- Login: generic 401 for unknown email, wrong password, or inactive user; an Argon2 verify
+  always runs (dummy hash for unknown users) so timing does not reveal registered emails.
+  Registration does reveal duplicates via 409 (accepted trade-off; rate-limited).
+- Tokens: JWT HS256, claims `sub` (user UUID), `type="access"`, `iat`, `exp`, `jti`;
+  lifetime `FINSIGHT_ACCESS_TOKEN_TTL_MINUTES` (default 60). Decoding pins the algorithm
+  (rejects `alg: none`/other algs), requires `exp/iat/sub`, and checks the user still exists
+  and is active on every request.
+- Secret: `FINSIGHT_JWT_SECRET` ≥ 32 chars; **app refuses to start in production without it**.
+  In development/test an ephemeral random secret is generated (tokens die on restart).
+- No refresh tokens or server-side revocation yet: a stolen token is valid until expiry
+  (deactivating the user revokes it immediately).
+
+**Authorization:**
+- Every endpoint except `/health/*`, `/auth/register`, `/auth/login` requires a valid token.
+- Company and financial data are shared reference data, readable by any authenticated user.
+- Watchlists and saved valuations are **owner-scoped in the SQL query** (`owner_id =
+  current_user.id`); another user's resource returns 404 (no existence oracle). Verified by
+  cross-user tests (`test_users_cannot_access_each_others_watchlists`,
+  `test_valuations_are_private`).
+- Saved valuation results are always computed server-side.
+
+**Rate limiting** (`app/core/ratelimit.py`): sliding window, in-process memory.
+
+| Scope | Key | Default |
+|---|---|---|
+| `auth` (register, login) | client IP | 10 / minute |
+| `compute` (calculators, save valuation) | user | 60 / minute |
+| `ingest` | user | 20 / hour |
+
+Exceeded → 429 `rate_limited` with `Retry-After`. Limits are **per process**: with N replicas
+the effective limit is N×; a shared store (Redis) is required before horizontal scaling. Client
+IP comes from uvicorn `--proxy-headers`; `FORWARDED_ALLOW_IPS` must be restricted to the
+reverse proxy in production (Compose uses `*`, acceptable only because port 8000 is bound to
+127.0.0.1).
+
+**Input hardening:** request models use `extra="forbid"`; tickers are restricted to
+`[A-Za-z0-9.-]{1,20}`; search escapes SQL `LIKE` wildcards; all SQL goes through SQLAlchemy
+bound parameters; list sizes are bounded (sensitivity axes ≤ 15, peers ≤ 50, ≤ 30 forecast
+years).
 
 ## 14. Error handling, logging, retries, background jobs
 
@@ -430,15 +679,22 @@ checks, rate limiting.
   (`ts, level, logger, msg, request_id, …extra`). Access log line per request with
   `method, path, status, duration_ms`. Toggle with `FINSIGHT_LOG_JSON`.
 - **Errors:** see §4.2.
-- **Retries:** frontend TanStack Query retries non-4xx failures up to 2 times. No backend retries
-  yet (no outbound calls exist).
-- **Background jobs:** none yet.
+  Structured events: `user_registered`, `login_succeeded`, `login_failed` (no email logged),
+  `ingested_financials` (ticker, provider, periods, warnings), `provider_error`,
+  `sec_edgar_retry`, `unhandled_exception`. Passwords, tokens and secrets are never logged.
+- **Retries:** backend → SEC EDGAR as in §7. Frontend TanStack Query retries non-4xx failures
+  up to 2 times.
+- **Transactions:** one session per request (`get_db`); services commit explicitly. Ingestion
+  commits once after all periods are written, so a failed ingest leaves earlier data intact.
+- **Background jobs:** none. Ingestion is synchronous in the request; move to a job queue if
+  multi-company or scheduled refreshes are added.
 
 ## 15. Deployment & testing workflows
 
 | Workflow | Command | Where |
 |----------|---------|-------|
-| Backend tests | `pytest` (in `backend/`) | local (SQLite), CI (Postgres) |
+| Backend tests | `pytest` (in `backend/`): domain unit, provider (MockTransport), API integration — no network | local (SQLite), CI (Postgres) |
+| Live EDGAR smoke test | `FINSIGHT_SEC_USER_AGENT=… python -m app.cli ingest AAPL` against a scratch DB | manual |
 | Backend lint/format/types | `ruff check .`, `ruff format --check .`, `mypy` | local, CI |
 | Frontend tests | `npm test` (Vitest + RTL, jsdom) | local, CI |
 | Frontend lint/build | `npm run lint`, `npm run build` (includes `tsc`) | local, CI |

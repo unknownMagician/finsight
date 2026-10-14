@@ -33,9 +33,34 @@ class Settings(BaseSettings):
     # Comma-separated in the environment, e.g. "http://a.test,http://b.test".
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
-    # Reserved for later phases; never exposed to the frontend.
-    anthropic_api_key: SecretStr | None = None
+    # --- Auth ---
+    # Required in production. In development/test an ephemeral random secret is generated at
+    # startup (tokens then do not survive restarts).
     jwt_secret: SecretStr | None = None
+    access_token_ttl_minutes: int = Field(default=60, ge=5, le=24 * 60)
+
+    # --- Rate limits (requests per window, per client IP or user) ---
+    rate_limit_enabled: bool = True
+    rate_limit_auth_per_minute: int = Field(default=10, ge=1)
+    rate_limit_compute_per_minute: int = Field(default=60, ge=1)
+    rate_limit_ingest_per_hour: int = Field(default=20, ge=1)
+
+    # --- SEC EDGAR provider ---
+    # SEC requires a descriptive User-Agent with contact info, e.g. "FinSight admin@example.com".
+    # Ingestion is refused until this is set.
+    sec_user_agent: str | None = None
+    sec_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+
+    # Reserved for Phase 5; never exposed to the frontend.
+    anthropic_api_key: SecretStr | None = None
+
+    @field_validator("jwt_secret", "anthropic_api_key", "sec_user_agent", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        # `FOO=` in .env or `${FOO:-}` in Compose yields "", which means "not configured".
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("cors_origins", mode="before")
     @classmethod
