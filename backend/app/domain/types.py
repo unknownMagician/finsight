@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -24,11 +24,17 @@ class DomainModel(BaseModel):
 
 
 class Scale(StrEnum):
-    """The unit multiplier that amounts are expressed in."""
+    """The unit multiplier that monetary amounts are expressed in.
+
+    Indian statements are commonly reported in lakhs (10^5) or crores (10^7). Share counts and
+    per-share amounts (EPS, price, dividend per share) are never scaled.
+    """
 
     UNITS = "units"
     THOUSANDS = "thousands"
+    LAKHS = "lakhs"
     MILLIONS = "millions"
+    CRORES = "crores"
     BILLIONS = "billions"
 
     @property
@@ -36,7 +42,9 @@ class Scale(StrEnum):
         return {
             Scale.UNITS: Decimal(1),
             Scale.THOUSANDS: Decimal(10) ** 3,
+            Scale.LAKHS: Decimal(10) ** 5,
             Scale.MILLIONS: Decimal(10) ** 6,
+            Scale.CRORES: Decimal(10) ** 7,
             Scale.BILLIONS: Decimal(10) ** 9,
         }[self]
 
@@ -46,6 +54,11 @@ def rescale(value: Decimal, from_scale: Scale, to_scale: Scale) -> Decimal:
     if from_scale == to_scale:
         return value
     return value * from_scale.multiplier / to_scale.multiplier
+
+
+ReportingBasis = Literal["consolidated", "standalone", "unspecified"]
+"""Consolidated (group) or standalone (parent-only) statements; ``unspecified`` when the
+source does not say. Periods of different bases are never combined."""
 
 
 class ValueKind(StrEnum):

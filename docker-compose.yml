@@ -29,6 +29,9 @@ services:
       FINSIGHT_ANTHROPIC_API_KEY: ${FINSIGHT_ANTHROPIC_API_KEY:-}
       FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET:-}
       FINSIGHT_SEC_USER_AGENT: ${FINSIGHT_SEC_USER_AGENT:-}
+      FINSIGHT_DEFAULT_MARKET: ${FINSIGHT_DEFAULT_MARKET:-IN}
+      FINSIGHT_MARKET_DATA_PROVIDER: ${FINSIGHT_MARKET_DATA_PROVIDER:-demo}
+      FINSIGHT_FUNDAMENTALS_PROVIDER: ${FINSIGHT_FUNDAMENTALS_PROVIDER:-demo}
       # Which peers may set X-Forwarded-For (used for per-IP rate limits). "*" is acceptable
       # here only because port 8000 is bound to 127.0.0.1; restrict it in production.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
@@ -49,7 +52,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:8080:8080"
 
 volumes:
   pgdata:

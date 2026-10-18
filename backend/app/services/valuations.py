@@ -10,18 +10,23 @@ from app import __version__
 from app.core.errors import AppError
 from app.domain.dcf import DCFInputs, run_dcf
 from app.models import SavedValuation, User
-from app.services.companies import get_by_ticker
+from app.services.companies import Market, get_company
 
 MAX_SAVED_PER_USER = 200
 
 
 def save(
-    db: Session, owner: User, name: str, ticker: str | None, inputs: DCFInputs
+    db: Session,
+    owner: User,
+    name: str,
+    ticker: str | None,
+    inputs: DCFInputs,
+    market: Market = "US",
 ) -> SavedValuation:
     count = db.scalar(select(func.count()).where(SavedValuation.owner_id == owner.id)) or 0
     if count >= MAX_SAVED_PER_USER:
         raise AppError("limit_exceeded", f"At most {MAX_SAVED_PER_USER} saved valuations", 409)
-    company = get_by_ticker(db, ticker) if ticker else None
+    company = get_company(db, ticker, market) if ticker else None
     result = run_dcf(inputs)
     valuation = SavedValuation(
         owner_id=owner.id,

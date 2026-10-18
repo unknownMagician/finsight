@@ -5,11 +5,34 @@
 > this document disagree, the code is wrong or this document is stale — fix one of them in the
 > same change.
 
-- Last updated: 2026-10-15 (Phase 3 — APIs, auth, persistence, SEC EDGAR ingestion)
+- Last updated: 2026-10-18 (Phases 4–7 complete: workspace UI, annual reports + AI with verified citations, reports & export, security audit)
 - Status legend: ✅ implemented & verified by tests · 🟡 implemented, not fully verified ·
   ⏳ planned (phase) · ❌ not started
 
 ---
+
+## 0. Market direction: India-first (migrated from SEC EDGAR, 2026-10-18)
+
+FinSight now primarily covers companies listed on **NSE and BSE**. The original SEC EDGAR
+integration (US, annual 10-K) is kept as an **optional US market** (`?market=US`), because it is
+already isolated behind the `FinancialDataProvider` protocol, costs nothing to keep, and its
+tests still pass unchanged. Nothing SEC-related was dropped from the database; existing rows were
+backfilled as `market = 'US'` (migration `0003`).
+
+Constraint: **only ₹0 data sources** are integrated, and the default configuration needs no
+credentials and no network (deterministic `demo` provider).
+
+| Concern | Before | Now |
+|---|---|---|
+| Default market | US only | `FINSIGHT_DEFAULT_MARKET=IN` (US optional) |
+| Company identity | ticker (globally unique) + CIK | (market, ticker) unique; IN companies keyed by ISIN; per-exchange `instruments` (NSE/BSE) |
+| Prices | none | End-of-day OHLCV (Tej keyless API, or demo) |
+| Corporate actions | none | Tej keyless API, or demo |
+| Statements | SEC companyfacts, annual | IN: demo or optional yfinance (annual + quarterly, reporting basis); US: SEC unchanged |
+| Market multiples | user-supplied only | `valuation-snapshot` from EOD close + stored statements |
+| UI | health page | sign-in, company search with NSE/BSE selector, research page |
+
+Provider verification (docs, free limits, terms, live check) is recorded in §7.
 
 ## 1. Feature matrix
 
@@ -18,26 +41,58 @@
 | F0 | Health checks (`/health/live`, `/health/ready`) | ✅ | 1 | `backend/tests/test_health.py`, `frontend/src/features/health/SystemStatus.test.tsx` |
 | F0 | Uniform error envelope + request IDs + JSON logging | ✅ | 1 | `backend/tests/test_health.py` |
 | F0 | Config via env, secrets masked, blank = unset | ✅ | 1, 3 | `backend/tests/test_config.py` |
-| F0 | Alembic migrations (0001 baseline, 0002 core tables) | ✅ SQLite · CI Postgres | 1, 3 | `tests/test_migrations.py` (round-trip, drift guard); every API test migrates up/down |
+| F0 | Alembic migrations (0001 baseline … 0004 documents) | ✅ SQLite · ✅ CI Postgres (0003 verified in run 39107495409) | 1, 3, IN, 5 | `tests/test_migrations.py` (round-trip, drift guard, 0003 data preservation) |
 | F0 | Docker images | ✅ | 1 | Both images build in CI `docker` job |
-| F0 | Docker Compose stack (`up`) | 🟡 | 1 | `docker compose config` validated; full `up` not yet run (no local Docker daemon) |
-| F0 | GitHub Actions CI | ✅ | 1 | Green on `main` and `dev/claude` |
-| F1 | Company directory, search, profile API | ✅ API · ⏳ UI (4) | 3 | `tests/test_companies_api.py` |
-| F1 | SEC EDGAR ingestion (annual 10-K, US-GAAP) | ✅ API/CLI · ⏳ UI (4) | 3 | `tests/test_edgar.py` (synthetic fixture + mocked HTTP); manual live smoke test 2026-10-15: AAPL/MSFT/JPM, AAPL FY2024 figures matched the 10-K |
-| F2 | Statement models + ratio engine | ✅ engine · ✅ API · ⏳ UI (4) | 2, 3 | `tests/domain/test_ratios.py`, `tests/test_companies_api.py` |
-| F3 | DCF + WACC + sensitivity | ✅ engine · ✅ API · ⏳ UI (4) | 2, 3 | `tests/domain/test_dcf.py`, `test_wacc.py`, `tests/test_calculations_api.py` |
-| F4 | Comparable companies | ✅ engine · ✅ API (user-supplied peer metrics) · ⏳ UI (4) | 2, 3 | `tests/domain/test_comps.py`, `tests/test_calculations_api.py` |
-| F5 | Forecast (bull/base/bear) | ✅ engine · ✅ API · ⏳ UI (4) | 2, 3 | `tests/domain/test_forecast.py`, `tests/test_calculations_api.py` |
-| F5 | Saved DCF valuations (owner-scoped) | ✅ API · ⏳ UI (4) | 3 | `tests/test_valuations_api.py` |
-| F6 | Annual report PDF upload & fact extraction | ⏳ | 5 | — |
-| F7 | AI research assistant with citations | ⏳ | 5 | — |
-| F8 | Research report generation & export | ⏳ | 6 | — |
-| F9 | Watchlists (owner-scoped CRUD) | ✅ API · ⏳ UI/dashboard (4) | 3 | `tests/test_watchlists_api.py` |
-| S1 | Authentication (Argon2id + JWT) & resource-level authorization | ✅ | 3 | `tests/test_auth_api.py`, `test_security.py`, cross-user tests in watchlist/valuation suites |
-| S2 | Rate limiting (in-process) | ✅ single process · ⏳ shared store for multi-replica | 3 | `tests/test_security.py`, `test_auth_api.py`, `test_calculations_api.py` |
-| — | Market prices / market cap feed | ❌ | — | Not integrated: no live price data exists in the system. Comps and DCF take market inputs from the user. |
+| F0 | Docker Compose stack (`up`) | ✅ via CI (no local Docker daemon) | 1, 7 | CI `docker` job: `compose up --wait`, smoke test through nginx (health, CSP, no-store, non-root containers) |
+| F0 | GitHub Actions CI | ✅ (Phase 3) · ⏳ not yet run on this change | 1 | Green on `main` and `dev/claude` up to `d29e0a6` |
+| IN1 | Indian instrument directory (NSE + BSE, ISIN grouping, renames, not-in-snapshot) | ✅ | IN | `tests/test_instruments.py`, `tests/test_providers_india.py`; live Tej smoke test 2026-10-18 (RELIANCE INE002A01018 → NSE + BSE) |
+| IN2 | Company search (name / symbol / ISIN, exchange filter) | ✅ API · ✅ UI | IN, 4 | `tests/test_india_api.py`, `frontend/src/features/companies/CompanyResearch.test.tsx` |
+| IN3 | Latest end-of-day close per listing, freshness labels | ✅ API · ✅ UI | IN, 4 | `test_india_api.py::test_quote_requires_unambiguous_listing`, `test_stale_data_is_flagged`; frontend tests |
+| IN4 | Daily EOD price history (unadjusted) + chart | ✅ API · ✅ UI | IN, 4 | `test_india_api.py::test_price_history`, Tej parser tests |
+| IN5 | Corporate actions (dividend, split, bonus, rights, merger, other) | ✅ API · ✅ UI | IN, 4 | `test_providers_india.py`, `test_india_api.py::test_corporate_actions_match_the_company_not_the_symbol` |
+| IN6 | Indian statements: annual + quarterly, consolidated/standalone | ✅ demo · 🟡 yfinance (optional) · ✅ UI | IN, 4 | demo: `test_india_api.py`; yfinance: normalizer + adapter tests with fakes, live shape check of RELIANCE.NS 2026-10-18; not run in CI |
+| IN7 | Valuation snapshot (market cap, EV, P/E, P/B, EV/EBITDA, EV/Revenue, dividend yield) | ✅ engine · ✅ API · ✅ UI | IN, 4 | `tests/domain/test_market_multiples.py`, `test_india_api.py::test_valuation_snapshot` |
+| IN8 | Provider status, capabilities, usage terms (`/market/status`) | ✅ API · ✅ UI | IN, 4 | `test_india_api.py::test_market_status_and_directory_sync` |
+| IN9 | Shareholding patterns | ❌ no free source | — | Reported as `unavailable_capabilities: shareholding` |
+| IN10 | Exchange disclosures / announcements | ❌ no free source | — | Reported as unavailable; NSE/BSE websites are not scraped |
+| IN11 | Intraday / live prices | ❌ no free source | — | Reported as unavailable; nothing is labelled real-time |
+| F1 | US company directory, search, profile (SEC) | ✅ API (optional, `market=US`) | 3 | `tests/test_companies_api.py` |
+| F1 | SEC EDGAR ingestion (annual 10-K, US-GAAP) | ✅ API/CLI (optional US) | 3 | `tests/test_edgar.py`; manual live smoke test 2026-10-15 |
+| F2 | Statement models + ratio engine (+ ROCE, net income growth, basis guard) | ✅ engine · ✅ API · ✅ UI (IN) | 2, 3, IN | `tests/domain/test_ratios.py`, `tests/test_companies_api.py`, `test_india_api.py` |
+| F3 | DCF + WACC + sensitivity | ✅ engine · ✅ API · ✅ UI | 2, 3, 4 | `tests/domain/test_dcf.py`, `test_wacc.py`, `tests/test_calculations_api.py` |
+| F4 | Comparable companies | ✅ engine · ✅ API · ✅ UI (peers from FinSight valuation snapshots) | 2, 3, 4 | `tests/domain/test_comps.py`, `tests/test_calculations_api.py` |
+| F5 | Forecast (bull/base/bear) | ✅ engine · ✅ API · ✅ UI | 2, 3, 4 | `tests/domain/test_forecast.py`, `tests/test_calculations_api.py` |
+| F5 | Saved DCF valuations (owner-scoped, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_valuations_api.py`, `test_india_api.py` |
+| F6 | Annual report PDF upload (text layer), retrieval, AI fact extraction with page verification | ✅ API · ✅ UI · 🟡 live Claude call not exercised (no API key here) | 5 | `tests/test_ai_units.py`, `tests/test_documents_research_api.py` (FakeLLM), `Research.test.tsx` |
+| F7 | AI research assistant with verified citations (Claude) | ✅ API · ✅ UI · 🟡 live Claude call not exercised (no API key here) | 5 | adapter request/response shape tests with a recording client; grounding tests; API tests with FakeLLM |
+| F8 | Research report generation (owner-scoped snapshots) & export (JSON, Markdown, CSV, script-free HTML) | ✅ API · ✅ UI | 6 | `tests/test_reports.py`, `Reports.test.tsx` |
+| F9 | Watchlists (owner-scoped CRUD, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_watchlists_api.py`, `test_india_api.py::test_indian_watchlist_and_valuation_link` |
+| S1 | Authentication (Argon2id + JWT) & resource-level authorization | ✅ API · ✅ UI sign-in | 3, 4 | `tests/test_auth_api.py`, `test_security.py`, cross-user tests; frontend redirect test |
+| S2 | Rate limiting (in-process) incl. market-data scope | ✅ single process · ⏳ shared store for multi-replica | 3 | `tests/test_security.py`, `test_india_api.py::test_market_data_rate_limit` |
+| S4 | Security audit + automated route-auth guard, security headers, dependency audits | ✅ | 7 | §17; `tests/test_security_audit.py`; pip-audit / npm audit clean |
+| T1 | End-to-end browser test (Playwright) of the full journey | ✅ | 7 | `frontend/e2e/journey.spec.ts`, CI `e2e` job |
+| S3 | Provider response cache (in-process TTL) | ✅ single process | IN | `test_providers_india.py::test_ttl_cache_expiry_eviction_and_errors`, cached flag in API tests |
 
 ---
+
+### 1.1 Frontend workspace (Phase 4)
+
+Routes (`src/app/routes.tsx`; all except `/` and `/login` require sign-in, pages are
+lazy-loaded): `/` search · `/login` · `/companies/:ticker?exchange=` research page ·
+`/calculators?ticker=` DCF (+ sensitivity grid, save), WACC, forecast, comparables ·
+`/watchlists` · `/valuations`.
+
+Rules the UI follows:
+- All requests go through `apiFetch` inside TanStack Query hooks in `src/features/<feature>/`;
+  TS interfaces mirror backend schemas (`features/*/types.ts`).
+- Numbers typed by the user are sent as **exact decimal strings** (`lib/decimal.ts`; percent →
+  fraction by shifting the decimal point, never via floats).
+- No default WACC, risk-free rate, ERP, tax or growth is pre-filled. The DCF equity bridge
+  (net debt, minority + preferred, shares) can be prefilled from the company's latest stored
+  annual statements, with a note naming the period, basis and provider. The DCF runs in
+  ₹ crore, so the share count is converted to crores (value per share stays in ₹).
+- Comparables take each company's metrics from its valuation snapshot (reported statements +
+  EOD close); unavailable metrics stay missing and are excluded with reasons by the engine.
 
 ## 2. Repository structure (actual)
 
@@ -54,10 +109,10 @@
 │   ├── alembic.ini
 │   ├── alembic/
 │   │   ├── env.py            # reads URL from app settings
-│   │   └── versions/         # 0001_baseline.py, 0002_core_tables.py
+│   │   └── versions/         # 0001_baseline, 0002_core_tables, 0003_india_market
 │   ├── app/
-│   │   ├── main.py           # create_app(): middleware, handlers, rate limiter, routers
-│   │   ├── cli.py            # python -m app.cli sync-companies | ingest TICKER...
+│   │   ├── main.py           # create_app(): middleware, handlers, rate limiter, cache, routers
+│   │   ├── cli.py            # sync-instruments | ingest [--market IN|US] T... | sync-companies
 │   │   ├── schemas.py        # API request/response models (transport layer)
 │   │   ├── core/
 │   │   │   ├── config.py     # Settings (pydantic-settings, FINSIGHT_* env)
@@ -65,27 +120,45 @@
 │   │   │   ├── middleware.py # RequestContextMiddleware (request ID + access log)
 │   │   │   ├── errors.py     # AppError(code, message, status, details, headers) → envelope
 │   │   │   ├── security.py   # Argon2id hashing, JWT create/decode, secret validation
-│   │   │   └── ratelimit.py  # in-process sliding-window RateLimiter
+│   │   │   ├── ratelimit.py  # in-process sliding-window RateLimiter
+│   │   │   └── cache.py      # in-process TTL cache for provider responses
 │   │   ├── db/
 │   │   │   ├── base.py       # DeclarativeBase with naming convention
 │   │   │   └── session.py    # lazy engine/sessionmaker, get_db dependency
-│   │   ├── models/           # ORM: user, company (+ periods, line items), watchlist, valuation
+│   │   ├── models/           # ORM: user, company (+ instruments, periods, line items), watchlist, valuation
 │   │   ├── domain/           # PURE financial logic (no I/O; guarded by a test) — see §9–10
 │   │   ├── providers/
-│   │   │   ├── base.py       # FinancialDataProvider protocol + DTOs + ProviderError
-│   │   │   ├── edgar_normalize.py # pure: companyfacts JSON → annual line items
-│   │   │   └── sec_edgar.py  # HTTP client: directory, companyfacts, retries
-│   │   ├── services/         # auth, companies (ingest/ratios), watchlists, valuations
+│   │   │   ├── base.py       # protocols (FinancialDataProvider [US], MarketDataProvider,
+│   │   │   │                 #   FundamentalsProvider), DTOs, Capability, errors
+│   │   │   ├── registry.py   # build providers from settings; usage terms
+│   │   │   ├── demo.py       # deterministic synthetic Indian data (default, offline)
+│   │   │   ├── tej.py        # Tej keyless API: directory, EOD OHLCV, corporate actions
+│   │   │   ├── yfinance_fundamentals.py # optional yfinance adapter (lazy import)
+│   │   │   ├── yfinance_normalize.py    # pure: Yahoo tables → line items
+│   │   │   ├── normalize_common.py      # shared statement validation
+│   │   │   ├── edgar_normalize.py # pure: companyfacts JSON → annual line items (US)
+│   │   │   └── sec_edgar.py  # HTTP client: directory, companyfacts, retries (US)
+│   │   ├── services/         # auth, companies, instruments, market_data, watchlists, valuations
 │   │   └── api/
-│   │       ├── deps.py       # DbSession, CurrentUser, rate-limit deps, Provider
-│   │       ├── health.py, auth.py, companies.py, calculations.py,
+│   │       ├── deps.py       # DbSession, CurrentUser, rate limits, providers, cache, Today
+│   │       ├── health.py, auth.py, companies.py, market.py, calculations.py,
 │   │       └── watchlists.py, valuations.py
 │   ├── tests/                # API/integration tests; tests/domain/ engine tests;
-│   │                         # fakes.py (FakeProvider), fixtures_edgar.py (SYNTHETIC data)
+│   │                         # fakes.py (FakeProvider), fixtures_edgar.py, fixtures_india.py
+│   │                         # (SYNTHETIC data in real provider shapes)
 │   └── Dockerfile
-└── frontend/                 # unchanged since Phase 1 (UI work is Phase 4)
+└── frontend/
     ├── vite.config.ts, nginx.conf, Dockerfile
-    └── src/ (app/, lib/api.ts, features/health/, pages/, test/)
+    └── src/
+        ├── app/              # routes (company page lazy-loaded), Layout, queryClient
+        ├── lib/              # api.ts (apiFetch + token), auth.ts (token store), format.ts (INR)
+        ├── components/       # DataBadges (freshness/demo/stale), States (panels, errors)
+        ├── features/auth/    # sign-in/register, RequireAuth
+        ├── features/companies/ # search, research page, panels, hooks, TS schema mirrors
+        ├── features/calculators/ # DCF, WACC, forecast, comps, saved-valuation hooks
+        ├── features/watchlists/, features/valuations/
+        ├── features/health/  # SystemStatus
+        └── pages/, test/
 ```
 
 Layering rule: `api` → `services` → (`models`, `providers`, `domain`). `domain` imports nothing
@@ -113,7 +186,11 @@ flowchart LR
         PROV[providers]
     end
     DB[(PostgreSQL 17)]
-    SEC[[SEC EDGAR<br/>data.sec.gov / sec.gov]]
+    CACHE[(in-process TTL cache)]
+    TEJ[[Tej API keyless<br/>NSE/BSE EOD + actions]]
+    YF[[Yahoo Finance via yfinance<br/>optional, personal use]]
+    DEMO[[demo provider<br/>synthetic, offline]]
+    SEC[[SEC EDGAR<br/>optional US]]
     CLAUDE[[Claude API<br/>⏳ Phase 5]]
     CLI[app.cli]
 
@@ -124,7 +201,12 @@ flowchart LR
     MW --> DEPS --> API --> SVC
     SVC --> DOM
     SVC --> DB
-    SVC --> PROV --> SEC
+    SVC --> CACHE
+    SVC --> PROV
+    PROV --> DEMO
+    PROV --> TEJ
+    PROV -.-> YF
+    PROV -.-> SEC
     CLI --> SVC
     SVC -.-> CLAUDE
 ```
@@ -132,7 +214,8 @@ flowchart LR
 **Security boundary:** the browser only ever calls same-origin `/api/v1/*`. All secrets
 (`FINSIGHT_DATABASE_URL`, `FINSIGHT_JWT_SECRET`, `FINSIGHT_ANTHROPIC_API_KEY`) and the SEC
 User-Agent live in the backend process environment. The frontend bundle contains no
-credentials and no provider URLs. Only the backend talks to SEC EDGAR.
+credentials and no provider URLs. Only the backend talks to Tej, Yahoo or SEC EDGAR; the
+browser holds only the user's own short-lived FinSight JWT (sessionStorage).
 
 ---
 
@@ -197,7 +280,7 @@ token (`exp`, `iat`, `sub` required, `type == "access"`, algorithm pinned to HS2
 user, and rejects missing/inactive users with 401 `not_authenticated` + `WWW-Authenticate:
 Bearer`.
 
-### 4.4 Ingest a company's annual financials
+### 4.4 Ingest a US company's annual financials (optional market, `?market=US`)
 
 ```mermaid
 sequenceDiagram
@@ -255,9 +338,80 @@ submit a result (`extra="forbid"` → 422).
 
 ### 4.7 Watchlists
 
-`/watchlists` CRUD and `/watchlists/{id}/items` add/remove by ticker (company must already be
-stored, else 404 `company_not_found`). Every query filters by `owner_id = current_user.id`; a
+`/watchlists` CRUD and `/watchlists/{id}/items` add/remove by ticker + optional `market`
+(default `FINSIGHT_DEFAULT_MARKET`; the company must already be stored, else 404
+`company_not_found`). Every query filters by `owner_id = current_user.id`; a
 watchlist owned by someone else is indistinguishable from a missing one (404).
+
+### 4.8 Indian directory and search
+
+```mermaid
+sequenceDiagram
+    participant UI as CompanySearch (React)
+    participant R as api.companies.search_companies
+    participant I as services.instruments
+    participant P as MarketDataProvider (demo | tej)
+    participant DB as companies / instruments
+    UI->>R: GET /companies?q=reliance&market=IN&exchange=NSE?
+    R->>I: ensure_directory() (only if no instrument exists yet)
+    I->>P: fetch_directory()
+    Note over P: tej: GET /v1/status → latest trading date,<br/>GET /v1/snapshot/{nse,bse}?date=…
+    P-->>I: listings (exchange, symbol, isin, series, name, company_key)
+    I->>DB: group by company_key (ISIN), upsert companies + instruments
+    R->>DB: match ticker prefix, name, any listing symbol prefix or exact ISIN
+    R-->>UI: CompanyOut[] with instruments[] (one per exchange)
+```
+
+Identity rules (`services/instruments.py`):
+- One `Instrument` per (exchange, ISIN); NSE and BSE listings of one ISIN share one `Company`.
+- `Company.ticker` (unique per market) = NSE symbol, else BSE symbol, else the ISIN if that
+  symbol is taken by another company, else `SYMBOL.EXCHANGE` (internal key, e.g. demo
+  `DEMOAGRO.BSE`). It follows NSE renames.
+- A symbol change under the same ISIN is a **rename** (old symbol appended to
+  `former_symbols`). A listing absent from the latest snapshot becomes
+  `listing_status = not_in_latest_snapshot` (it did not trade that day; **not** called
+  delisted, because a snapshot cannot prove delisting).
+- ISINs are only stored when the source supplies a well-formed one; the demo provider has none.
+- Refresh: `POST /market/directory/sync` (ingest rate limit) or
+  `python -m app.cli sync-instruments`. A snapshot only contains instruments that traded on
+  that date.
+
+### 4.9 Quotes and price history (end-of-day only)
+
+`GET /companies/{ticker}/quote?exchange=` and `/prices?exchange=&start=&end=`:
+`resolve_listing` picks the instrument. An explicit `exchange` must exist (404
+`listing_not_found`); without it, a company with more than one active listing is **409
+`ambiguous_listing`** (details list the listings). `services.market_data` then calls
+`fetch_eod_bars` through the TTL cache. Quote = last bar within the past 21 days (404
+`market_data_not_found` otherwise). Every response carries `freshness {provider, nature
+(end_of_day | demo), as_of (trading date), retrieved_at, cached, stale, adjusted=false,
+source_url}`; `stale` = `as_of` more than `FINSIGHT_MARKET_DATA_STALE_AFTER_DAYS` (default 4)
+calendar days before today (IST). Prices are raw exchange closes, not adjusted for splits or
+bonuses. Rows with non-positive or inconsistent OHLC are dropped and reported in `warnings`.
+
+### 4.10 Indian statements
+
+`POST /companies/{ticker}/ingest` (market IN) → `services.companies.ingest_india` builds an
+`InstrumentRef` from the preferred listing (active NSE, else active BSE) and calls the
+configured `FundamentalsProvider` (`demo` | `yfinance`; `none` → 503
+`provider_not_configured`). Periods are upserted on **(fiscal_year, fiscal_period, basis)**,
+so consolidated and standalone series coexist and never overwrite each other.
+`GET /financials?period_type=annual|quarterly&basis=` filters; `available_bases` lists what is
+stored. `GET /ratios?basis=` uses annual periods of **one** basis (default consolidated, then
+standalone, then unspecified); the prior year comes from the same basis only, and the domain
+rejects a basis mismatch. Quarterly periods are never mixed into annual ratios; no TTM figures
+are computed.
+
+### 4.11 Valuation snapshot
+
+`GET /companies/{ticker}/valuation-snapshot?exchange=&basis=` → latest stored annual period
+(chosen basis) + latest EOD close of the resolved listing + corporate actions of that exchange.
+Share-count events (split, bonus, rights, merger) with ex-date after the period end and on or
+before the price date **block** per-share metrics (`not_meaningful`, issue
+`share_count_changed_after_period`). Dividend yield = sum of that exchange's cash dividends with
+ex-date in the trailing 365 days ÷ close (NSE and BSE report the same dividend; only one
+exchange is counted). If the provider has no corporate actions, dividend yield is
+`missing_inputs` and the issue `corporate_actions_unavailable` is added. Formulas: §9.7.
 
 ---
 
@@ -274,11 +428,17 @@ decimals); requests may send numbers or strings. "Auth" = Bearer token required.
 | POST | `/auth/register` | — | auth/IP | `RegisterRequest {email, password (12–128), display_name?}` | 201 `UserOut`; 409 |
 | POST | `/auth/login` | — | auth/IP | `LoginRequest {email, password}` | `TokenResponse`; 401 |
 | GET | `/auth/me` | ✓ | — | — | `UserOut` |
-| GET | `/companies?q=&limit=` | ✓ | — | q 1–100 chars, limit 1–50 | `CompanyOut[]` (exact ticker, then ticker prefix, then name) |
-| GET | `/companies/{ticker}` | ✓ | — | — | `CompanyOut`; 404 |
-| POST | `/companies/{ticker}/ingest` | ✓ | ingest/user | — | `IngestOut`; 404/502/503 |
-| GET | `/companies/{ticker}/financials` | ✓ | — | — | `FinancialsOut {company, periods[{…, source, line_items[{statement,item,value,source_concept,source_accession}]}]}` |
-| GET | `/companies/{ticker}/ratios?fiscal_year=` | ✓ | — | — | `RatioReport`; 404 |
+| GET | `/companies?q=&limit=&market=&exchange=` | ✓ | — | q 1–100 chars, limit 1–50, market `IN` (default) / `US`, exchange `NSE`/`BSE` (IN only) | `CompanyOut[]` incl. `instruments[]` (exact ticker, then ticker prefix, then name) |
+| GET | `/companies/{ticker}?market=` | ✓ | — | ticker, or ISIN for IN | `CompanyOut`; 404 |
+| POST | `/companies/{ticker}/ingest?market=` | ✓ | ingest/user | — | `IngestOut {company, provider, periods_ingested, fiscal_years, warnings}`; 404/502/503 |
+| GET | `/companies/{ticker}/financials?market=&period_type=&basis=` | ✓ | — | period_type `annual`/`quarterly`; basis `consolidated`/`standalone`/`unspecified` | `FinancialsOut {company, available_bases, periods[{…, basis, source, line_items[…]}]}` |
+| GET | `/companies/{ticker}/ratios?market=&fiscal_year=&basis=` | ✓ | — | — | `RatioReport` (incl. `basis`); 404 |
+| GET | `/companies/{ticker}/quote?exchange=` | ✓ | market/user | IN | `QuoteOut` (latest EOD bar + `freshness`); 404/409/501/502/503 |
+| GET | `/companies/{ticker}/prices?exchange=&start=&end=` | ✓ | market/user | IN; default last 365 days, ≤ 20 years | `PriceHistoryOut {listing, bars[], freshness, warnings}` |
+| GET | `/companies/{ticker}/corporate-actions` | ✓ | market/user | IN | `CorporateActionsOut`; 501 if unsupported |
+| GET | `/companies/{ticker}/valuation-snapshot?exchange=&basis=` | ✓ | market/user | IN | `ValuationSnapshotOut {listing, basis, period_source, quote, report: MarketMultiplesReport}` |
+| GET | `/market/status` | ✓ | — | — | `MarketStatusOut {default_market, providers[{role, name, configured, capabilities, data_nature, usage_terms}], reachable, latest_trading_date, published_at, unavailable_capabilities}` |
+| POST | `/market/directory/sync` | ✓ | ingest/user | — | `DirectorySyncOut`; 502 |
 | POST | `/calculations/wacc` | ✓ | compute/user | `WACCInputs` | `WACCResult` |
 | POST | `/calculations/dcf` | ✓ | compute/user | `DCFInputs` | `DCFResult` |
 | POST | `/calculations/dcf/sensitivity` | ✓ | compute/user | `{inputs, wacc_values[≤15], column_values[≤15], output}` | `SensitivityTable` |
@@ -287,11 +447,22 @@ decimals); requests may send numbers or strings. "Auth" = Bearer token required.
 | GET | `/watchlists` | ✓ | — | — | `WatchlistOut[]` |
 | POST | `/watchlists` | ✓ | — | `{name}` | 201 `WatchlistOut`; 409 name taken / limit |
 | GET/PATCH/DELETE | `/watchlists/{id}` | ✓ owner | — | PATCH `{name}` | `WatchlistOut` / 204; 404 |
-| POST | `/watchlists/{id}/items` | ✓ owner | — | `{ticker}` | `WatchlistOut` (idempotent) |
-| DELETE | `/watchlists/{id}/items/{ticker}` | ✓ owner | — | — | `WatchlistOut`; 404 |
+| POST | `/watchlists/{id}/items` | ✓ owner | — | `{ticker, market?}` | `WatchlistOut` (idempotent) |
+| DELETE | `/watchlists/{id}/items/{ticker}?market=` | ✓ owner | — | — | `WatchlistOut`; 404 |
 | GET | `/valuations` | ✓ | — | — | `SavedValuationOut[]` (newest first) |
-| POST | `/valuations` | ✓ | compute/user | `{name, ticker?, inputs: DCFInputs}` | 201 `SavedValuationOut` |
+| POST | `/valuations` | ✓ | compute/user | `{name, ticker?, market?, inputs: DCFInputs}` | 201 `SavedValuationOut` (incl. `market`) |
 | GET/DELETE | `/valuations/{id}` | ✓ owner | — | — | `SavedValuationOut` / 204; 404 |
+| POST | `/documents` | ✓ | upload/user | multipart `file, title, ticker?, market?, fiscal_year?, doc_type?` | 201 `DocumentOut`; 409/413/422 |
+| GET | `/documents?ticker=&market=` | ✓ owner | — | — | `DocumentOut[]` (incl. facts) |
+| GET/DELETE | `/documents/{id}` | ✓ owner | — | — | `DocumentOut` / 204; 404 |
+| GET | `/documents/{id}/pages/{n}` | ✓ owner | — | — | `DocumentPageOut {page_number, text}` |
+| POST | `/documents/{id}/facts/extract` | ✓ owner | ai/user | `{metrics?: string[≤20]}` | `DocumentOut` with verified/unverified facts; 422/502/503 |
+| GET | `/research/status` | ✓ | — | — | `{configured, provider, model}` |
+| POST | `/reports` | ✓ | compute/user (+ ai/user) | `{ticker, market?, exchange?, basis?, include_ai?, title?}` | 201 `ReportOut {id, title, ticker, includes_ai, engine_version, created_at, content}`; 404/503 |
+| GET | `/reports` | ✓ owner | — | — | `ReportSummaryOut[]` |
+| GET/DELETE | `/reports/{id}` | ✓ owner | — | — | `ReportOut` / 204; 404 |
+| GET | `/reports/{id}/export?format=json\|md\|html\|csv` | ✓ owner | — | — | file download |
+| POST | `/research/ask` | ✓ | ai/user | `{question 3–1000, ticker?, market?, document_ids?[≤10]}` | `ResearchAnswerOut {segments[{text, citations[{source, cited_text, label, document_id, page_number}]}], sources[], grounding, issues[], model, tokens, disclaimer}`; 404/422/502/503 |
 
 Schemas live in `app/schemas.py` (transport) and `app/domain/*` (calculator I/O). Per-user
 limits: 20 watchlists, 100 companies per watchlist, 200 saved valuations.
@@ -306,8 +477,16 @@ Error envelope (all non-2xx):
 Error codes: `validation_error`, `invalid_assumptions`, `not_authenticated`,
 `invalid_credentials`, `email_already_registered`, `rate_limited` (+ `Retry-After`),
 `not_found`, `company_not_found`, `no_financial_data`, `watchlist_name_taken`,
-`limit_exceeded`, `provider_unavailable`, `provider_not_configured`, `http_error`,
-`internal_error`.
+`limit_exceeded`, `provider_unavailable`, `provider_not_configured`, `provider_rate_limited`
+(503, free-tier limit reached), `capability_unavailable` (501, provider does not offer the
+data), `market_data_not_found`, `listing_not_found`, `ambiguous_listing` (409,
+`details.listings`), `invalid_range`, `invalid_valuation_inputs`, `invalid_request`, `invalid_pdf`,
+`file_too_large` (413), `document_exists`, `no_text`, `no_sources`, `ai_not_configured`,
+`ai_refused`, `ai_rate_limited`, `ai_unavailable`,
+`http_error`, `internal_error`.
+
+`CompanyOut` changed shape: `cik` is now nullable (US only) and `market`, `isin` and
+`instruments[]` were added. Existing fields and US behaviour are unchanged.
 
 ---
 
@@ -322,6 +501,9 @@ Error codes: `validation_error`, `invalid_assumptions`, `not_authenticated`,
 |---|---|
 | `0001` | Baseline (no tables) |
 | `0002` | users, companies, financial_periods, financial_line_items, watchlists, watchlist_items, saved_valuations |
+| `0005` | research_reports (owner-scoped JSON snapshots) |
+| `0004` | documents (owner-scoped, UK owner+sha256), document_pages, document_chunks, document_facts |
+| `0003` | India market: `instruments` table; `companies.market` (existing rows backfilled `US`), `companies.isin` (unique, nullable), `companies.cik` nullable, `companies.ticker` → 30 chars and unique per (market, ticker); `financial_periods.basis` (default `unspecified`), unique on (company, fiscal_year, fiscal_period, basis). Downgrade deletes IN rows only (0002 cannot represent them). |
 
 ```mermaid
 erDiagram
@@ -330,6 +512,7 @@ erDiagram
     WATCHLISTS ||--o{ WATCHLIST_ITEMS : contains
     COMPANIES ||--o{ WATCHLIST_ITEMS : "listed in"
     COMPANIES ||--o{ FINANCIAL_PERIODS : reports
+    COMPANIES ||--o{ INSTRUMENTS : "listed as"
     FINANCIAL_PERIODS ||--o{ FINANCIAL_LINE_ITEMS : has
     COMPANIES |o--o{ SAVED_VALUATIONS : "subject of"
 
@@ -342,17 +525,36 @@ erDiagram
     }
     COMPANIES {
         int id PK
-        varchar ticker UK "upper-case"
-        varchar cik UK "10-digit"
+        varchar market "IN|US; UK with ticker"
+        varchar ticker "upper-case, unique per market"
+        varchar cik UK "US only, 10-digit"
+        varchar isin UK "IN equity ISIN, from source only"
         varchar name
-        varchar exchange
+        varchar exchange "US venue (SEC directory)"
         timestamptz last_ingested_at
+    }
+    INSTRUMENTS {
+        int id PK
+        int company_id FK
+        varchar exchange "NSE|BSE; UK with isin"
+        varchar symbol "indexed with exchange"
+        varchar isin
+        varchar series "NSE series / BSE group"
+        varchar name "exchange short name"
+        varchar currency "INR"
+        varchar listing_status "active|not_in_latest_snapshot"
+        varchar provider
+        varchar provider_instrument_key
+        date last_traded_on
+        json former_symbols
+        timestamptz retrieved_at
     }
     FINANCIAL_PERIODS {
         int id PK
         int company_id FK
-        int fiscal_year "UK with company, fiscal_period"
-        varchar fiscal_period "FY"
+        int fiscal_year "UK with company, fiscal_period, basis"
+        varchar fiscal_period "FY|Q1..Q4"
+        varchar basis "consolidated|standalone|unspecified"
         date period_start
         date period_end
         varchar currency
@@ -368,7 +570,7 @@ erDiagram
         varchar statement "income|balance|cash_flow"
         varchar item "domain field name"
         numeric value
-        varchar source_concept "e.g. us-gaap:Revenues"
+        varchar source_concept "us-gaap:Revenues | yfinance:Total Revenue | demo:revenue"
         varchar source_accession "SEC filing"
     }
     WATCHLISTS {
@@ -393,27 +595,50 @@ erDiagram
     }
 ```
 
-Deletes cascade from users → watchlists/valuations, companies → periods → line items, and
-watchlists → items. User-facing resources use UUID keys (no enumerable IDs).
+Deletes cascade from users → watchlists/valuations, companies → instruments and periods →
+line items, and watchlists → items. User-facing resources use UUID keys (no enumerable IDs).
 
 ---
 
 ## 7. External financial data providers
 
-| Provider | Status | Data | Access |
-|---|---|---|---|
-| SEC EDGAR (`app/providers/sec_edgar.py`) | ✅ | Company directory (`company_tickers_exchange.json`), XBRL companyfacts (annual 10-K / 10-K/A, US-GAAP, USD) | Public; requires `FINSIGHT_SEC_USER_AGENT` with contact info (SEC fair-access policy, < 10 req/s) |
-| Market prices / market cap | ❌ | — | None. The system has **no** price data; DCF/comps market inputs come from the user. |
+Only sources usable at **₹0** are integrated. Evaluation (2026-10-18, against current docs and,
+where keyless, a live request):
 
-Client behaviour: 15 s timeout (`FINSIGHT_SEC_TIMEOUT_SECONDS`); retries up to 3 times on
-429/500/502/503/504 and transport errors with exponential backoff 0.5 s, 1 s, 2 s (or
-`Retry-After`, capped at 10 s); 404 → `ProviderNotFoundError`; other 4xx / malformed JSON →
-`ProviderError`. Redirects are not followed. The directory is cached in-process for 24 h.
+| Candidate | Verdict | Free access | What we use | Limits / caveats |
+|---|---|---|---|---|
+| **Tej API** (`api.tejhq.dev`, OpenAPI 0.1.0) | ✅ integrated (`tej`) | Keyless "Open" tier, no signup | `/v1/status`, `/v1/snapshot/{nse,bse}`, `/v1/ohlcv/{ex}/{symbol}`, `/v1/actions/{symbol}` | EOD only (refresh ~18:30 IST trading days). NSE from 2010-01-04, BSE from 2024-07-08. Raw (unadjusted) prices. 100 req/10 s/IP edge, 120/min origin. Adjusted prices and ISIN symbol history need a free key (not integrated); screener/resolve/metrics are paid (not used). |
+| **yfinance** 1.7.0 (unofficial Yahoo) | 🟡 optional (`yfinance`), off by default | No key | Annual + quarterly income, balance, cash flow; `financialCurrency` | Not affiliated with Yahoo; README: Yahoo API "intended for personal use only". Can break or rate-limit. Does not state consolidated vs standalone. Quarters can be missing (e.g. RELIANCE.NS lacked Sep-2025). Not used for prices (Tej covers EOD). |
+| **Fincrux** | ❌ rejected | Hobby: 5 calls/day | — | Statement row schema undocumented (example arrays empty), terms page 404 on 2026-10-18, API key passed in the query string, quota too small. |
+| Upstox / Zerodha Kite / NSE / BSE data products | ❌ not integrated | Market data and fundamentals need paid plans or licences | — | Out of scope (zero-cost requirement). NSE/BSE websites are **not** scraped. |
+| SEC EDGAR | ✅ kept, optional US | Public | companyfacts (annual 10-K) | Needs `FINSIGHT_SEC_USER_AGENT`. |
+| `demo` (built in) | ✅ default | — | Directory, EOD bars, actions, statements | Synthetic, deterministic, offline, clearly labelled; no ISINs. |
 
-The provider sits behind the `FinancialDataProvider` protocol (`lookup`, `list_companies`,
-`fetch_annual_financials`), so another source can be added without touching services or API.
+Configuration (`app/core/config.py`): `FINSIGHT_DEFAULT_MARKET=IN`,
+`FINSIGHT_MARKET_DATA_PROVIDER=demo|tej`, `FINSIGHT_FUNDAMENTALS_PROVIDER=demo|yfinance|none`,
+`FINSIGHT_MARKET_DATA_TIMEOUT_SECONDS=15`, `FINSIGHT_MARKET_DATA_CACHE_TTL_SECONDS=900`,
+`FINSIGHT_MARKET_DATA_STALE_AFTER_DAYS=4`, `FINSIGHT_RATE_LIMIT_MARKET_DATA_PER_MINUTE=120`.
+No credentials are needed for any default or free option.
 
-## 8. Data ingestion & normalization (`app/providers/edgar_normalize.py`)
+**Contracts** (`app/providers/base.py`): `MarketDataProvider` (`fetch_directory`,
+`fetch_eod_bars`, `fetch_corporate_actions`, `status`, `capabilities`) and
+`FundamentalsProvider` (`fetch_financials(InstrumentRef)`). Each declares `capabilities`; a
+missing capability → 501 `capability_unavailable`, never a substitute source.
+`/market/status` scopes capabilities by role (prices/actions vs statements).
+
+**Tej client** (`app/providers/tej.py`): symbols validated locally against the spec pattern
+`^[A-Z0-9][A-Z0-9\-&]{0,29}$` before any request; 15 s timeout; up to 3 retries on
+429/5xx/transport errors (backoff 0.5/1/2 s or `Retry-After` ≤ 10 s); 400/404 →
+`ProviderNotFoundError`; 401/402 → `CapabilityUnavailableError`; exhausted 429 →
+`ProviderRateLimitedError` (API 503 `provider_rate_limited`); malformed JSON/envelope →
+`ProviderError` (502). Redirects are not followed.
+
+**SEC EDGAR client** (unchanged): 15 s timeout (`FINSIGHT_SEC_TIMEOUT_SECONDS`), same retry
+policy, directory cached in-process for 24 h, behind `FinancialDataProvider`.
+
+## 8. Data ingestion & normalization
+
+### 8.1 SEC EDGAR (US, `app/providers/edgar_normalize.py`)
 
 Pure function `normalize_companyfacts(doc, max_years=10)`:
 
@@ -445,12 +670,51 @@ Pure function `normalize_companyfacts(doc, max_years=10)`:
   `missing_inputs`. Industry-specific mappings are future work.
 
 Operational CLI: `python -m app.cli sync-companies` (loads ~10k directory rows into
-`companies` so search works before ingestion) and `python -m app.cli ingest AAPL MSFT …`.
+`companies` so search works before ingestion) and `python -m app.cli ingest --market US AAPL …`.
+US XBRL concept mappings are **not** reused for Indian data.
+
+### 8.2 Yahoo Finance via yfinance (IN, `app/providers/yfinance_normalize.py`)
+
+Pure `normalize_yahoo_statements(tables, currency)`; the adapter turns DataFrames into plain
+dicts first. Verified against live RELIANCE.NS output (yfinance 1.7.0, 2026-10-18).
+
+1. **Units:** absolute amounts in `financialCurrency` → `scale = units`; EPS and share counts
+   unscaled. Ingestion fails if Yahoo reports no statement currency.
+2. **Basis:** always `unspecified` with a warning (Yahoo does not say consolidated/standalone).
+3. **Fiscal labels:** annual column → FY named by its end year (31-Mar-2026 → FY2026). Fiscal
+   year-end month = most common annual month; quarter n ends 3n months after it
+   (30-Jun-2026 → Q1 FY2027). Misaligned quarters are skipped with a warning; quarters without
+   annual data cannot be labelled and are skipped.
+4. **Mapping** (first label with a value wins; recorded as `yfinance:<label>`): revenue ←
+   Total Revenue / Operating Revenue; cost_of_revenue ← Cost Of Revenue; gross_profit;
+   operating_income ← Operating Income; D&A ← Reconciled Depreciation; interest_expense;
+   pretax_income; income_tax_expense ← Tax Provision; net_income ← Net Income Common
+   Stockholders / Net Income; diluted_shares ← Diluted Average Shares; diluted_eps; cash ← Cash
+   And Cash Equivalents; short_term_investments ← Other Short Term Investments; receivables;
+   inventory; current assets/liabilities; total_assets; payables; short_term_debt ← Current
+   Debt; long_term_debt; total_debt ← Total Debt (**includes lease obligations**);
+   total_liabilities ← Total Liabilities Net Minority Interest; total_equity ← Stockholders
+   Equity; minority_interest; preferred_equity; shares_outstanding ← Ordinary Shares Number;
+   operating_cash_flow; capex, dividends, buybacks ← Capital Expenditure / Cash Dividends Paid /
+   Repurchase Of Capital Stock **negated** (Yahoo reports outflows as negatives).
+5. **Missing:** NaN/absent → absent. Wrong-sign values are dropped by domain validation with a
+   warning. No restatement information is available from Yahoo.
+
+### 8.3 Demo provider (`app/providers/demo.py`)
+
+Synthetic ₹-crore statements (consolidated and/or standalone, five fiscal years ending 31 March,
+plus reported quarters of the current year), EOD bars on weekdays (no holiday calendar), and
+scripted corporate actions. Scenarios: cross-listed company, loss-making year, BSE-only
+standalone filer, same symbol on NSE and BSE for two different companies, bonus issue after the
+fiscal year-end. All names start with "Demo" and every response is tagged `demo`.
 
 ## 9. Financial calculations (`backend/app/domain/`)
 
-**Status:** pure engine (Phase 2), exposed via `/calculations/*` and `/companies/{ticker}/ratios`
-(Phase 3). Ratios run on stored SEC EDGAR data; DCF/forecast/comps run on user-supplied inputs.
+**Status:** pure engine (Phase 2), exposed via `/calculations/*`, `/companies/{ticker}/ratios`
+and `/companies/{ticker}/valuation-snapshot`. Ratios run on stored statements (IN: demo or
+yfinance; US: SEC). DCF/forecast/comps still take user-supplied inputs: no Indian WACC, risk-free
+rate, ERP, tax rate or terminal growth is hard-coded anywhere; they remain dated, user-entered
+assumptions.
 
 ### 9.1 Conventions (apply to every calculation)
 
@@ -458,7 +722,8 @@ Operational CLI: `python -m app.cli sync-companies` (loads ~10k directory rows i
   Full precision is kept; rounding is a presentation concern.
 - **Rates:** fractions (`0.08` = 8%). **Multiples ("times")** are plain ratios.
 - **Units:** each statement / DCF / forecast / comps object carries one `currency`
-  (ISO 4217) and one `scale` (`units|thousands|millions|billions`). Cross-object arithmetic
+  (ISO 4217) and one `scale` (`units|thousands|lakhs|millions|crores|billions`; lakh = 10^5,
+  crore = 10^7). Share counts and per-share amounts (EPS, price, DPS) are never scaled. Cross-object arithmetic
   rescales via `types.rescale`; **different currencies are rejected** (FX conversion belongs
   to the data layer with a documented rate source).
 - **Provenance:** `ValueKind` = `reported | calculated | assumption | forecast | ai_explanation`.
@@ -468,6 +733,9 @@ Operational CLI: `python -m app.cli sync-companies` (loads ~10k directory rows i
   components (e.g. total debt needs both ST and LT debt unless total debt is reported).
 - **Validation:** structural and assumption errors → `pydantic.ValidationError` (or
   `ValueError` for cross-object checks). Non-fatal concerns → `Issue{code, severity, message}`.
+- **Reporting basis:** `FinancialPeriodData.basis` ∈ `consolidated | standalone | unspecified`.
+  `compute_ratios` raises if `prior` has a different basis; services only pair same-basis
+  periods. Quarterly and annual periods are never combined.
 - **Immutability:** all domain models are frozen with `extra="forbid"`.
 - **Purity:** `tests/domain/test_types_and_numeric.py` fails if any domain module imports
   I/O libraries (fastapi, sqlalchemy, httpx, requests, os, random, app.db).
@@ -508,7 +776,9 @@ positive denominator**, otherwise `not_meaningful` (e.g. ROE with negative equit
 | `interest_coverage` | operating_income ÷ interest_expense | times |
 | `free_cash_flow` | operating_cash_flow − capital_expenditures | currency |
 | `fcf_margin` | free_cash_flow ÷ revenue | ratio |
+| `return_on_capital_employed` | operating_income ÷ (total_assets − total_current_liabilities), ending balance | ratio |
 | `revenue_growth` | revenue ÷ prior_revenue − 1 (only with `prior`) | ratio |
+| `net_income_growth` | net_income ÷ prior_net_income − 1 (only with `prior`; not meaningful if prior ≤ 0) | ratio |
 
 \* With `prior`: average of opening (prior, rescaled) and closing balance. Without `prior`:
 ending balance, stated in `note`. `prior` must be the same company and currency and must end
@@ -567,6 +837,26 @@ shares_outstanding` (None if equity ≤ 0 or shares missing). Not applicable (wi
 target metric is missing or ≤ 0, or `net_debt` is missing for the EV bridge. Warning
 `few_peers` when fewer than 3 usable peers.
 
+### 9.7 Market multiples (`market_multiples.compute_market_multiples`)
+
+Inputs: one `FinancialPeriodData` + `MarketPrice{price, price_date, currency, source}` (an EOD
+close) + optional `share_count_events_after_period`, `trailing_dividends_per_share`.
+
+| Key | Formula | Notes |
+|---|---|---|
+| `market_cap` | price × shares_outstanding (rescaled to the statement scale) | period-end balance-sheet shares |
+| `enterprise_value` | market_cap + total_debt + minority_interest + preferred_equity − cash_and_equivalents | debt and cash required; minority/preferred added when reported, otherwise named in `note` |
+| `price_to_earnings` | price ÷ diluted_eps | not meaningful when EPS ≤ 0 |
+| `price_to_book` | market_cap ÷ total_equity | not meaningful when equity ≤ 0 |
+| `ev_to_ebitda` | EV ÷ (operating_income + D&A) | not meaningful when EBITDA ≤ 0 |
+| `ev_to_revenue` | EV ÷ revenue | |
+| `dividend_yield` | trailing_dividends_per_share ÷ price | missing when no dividend data |
+
+Rejected (ValueError → 422): price currency ≠ statement currency; price date before period end.
+Issues: `share_count_changed_after_period` (all per-share metrics become `not_meaningful`),
+`stale_fundamentals` (period end > 456 days before the price), `non_annual_period`. Outputs are
+`calculated`; the price is an end-of-day market fact and the statements are `reported`.
+
 ## 10. DCF valuation & sensitivity (`dcf.run_dcf`, `dcf.sensitivity`)
 
 Unlevered FCF (FCFF) DCF. Inputs (`DCFInputs`): `free_cash_flows` (1–30 years), `wacc`,
@@ -609,12 +899,113 @@ TV share = 17/21 ≈ 81% (flagged `terminal_value_dominant`).
 
 ## 11. PDF upload, extraction, chunking, retrieval
 
-⏳ Planned (Phase 5). nginx already caps request bodies at 25 MB for `/api/`.
+`POST /documents` (multipart: `file`, `title`, optional `ticker`/`market`, `fiscal_year`,
+`doc_type` ∈ annual_report | quarterly_results | other), upload rate limit 20/hour/user.
+
+1. **Limits & validation:** body read with a hard cap of `FINSIGHT_UPLOAD_MAX_MB` (default 20;
+   nginx caps at 25) → 413 `file_too_large`; must start with `%PDF-`, not encrypted, ≤
+   `FINSIGHT_UPLOAD_MAX_PAGES` (600) → otherwise 422 `invalid_pdf`. ≤ 50 documents per user;
+   the same file (SHA-256) twice for one user → 409 `document_exists`.
+2. **Extraction** (`app/documents/pdf.py`, pypdf): text layer only, per page, whitespace
+   normalized. Scanned/image-only PDFs are stored with `status = no_text` and cannot be searched,
+   cited or extracted (**no OCR**). The PDF bytes are **not stored**; only text + SHA-256.
+3. **Chunking** (`app/documents/chunking.py`): paragraphs packed to ~1,200 chars (max 2,000),
+   never crossing a page, so every chunk and citation maps to exactly one page.
+4. **Retrieval** (`app/ai/retrieval.py`): deterministic BM25 over the asking user's chunks
+   (filtered by company or explicit `document_ids`); numbers are tokenized with Indian grouping
+   commas removed. No embeddings, no external service.
+5. **Ownership:** documents, pages, chunks and facts are owner-scoped like watchlists; another
+   user's document is a 404 and is never retrieved for someone else's question.
+
+**Fact extraction** (`POST /documents/{id}/facts/extract`, AI rate limit 30/hour/user): the 12
+pages most relevant to the requested metrics (BM25) are sent to Claude with a JSON-schema
+structured output (`RawFact`: metric, value as printed, unit as printed — crores/lakhs/…,
+basis, period, page, verbatim quote). Each fact is then **verified** (`app/ai/grounding.py`):
+the quote must occur on that page (whitespace/typographic-quote insensitive) and the value must
+appear as a number in the quote; facts citing a page that was not sent are unverified.
+Unverified facts are stored with the reason and shown as such, and are never used as data.
+Re-extraction replaces the document's facts. Stored with model name and timestamp
+(`kind = extracted`).
 
 ## 12. AI prompting, retrieval, citation validation
 
-⏳ Planned (Phase 5). The Claude API key is a backend-only setting
-(`FINSIGHT_ANTHROPIC_API_KEY`); all model calls will go through a backend provider adapter.
+**Adapter** (`app/ai/claude.py`, official `anthropic` SDK 1.x, backend only, behind the
+`LLMProvider` protocol in `app/ai/base.py`). Model `FINSIGHT_AI_MODEL` (default
+`claude-opus-5-5`), timeout `FINSIGHT_AI_TIMEOUT_SECONDS` (120 s), SDK retries 2. Every request
+uses server-side refusal fallbacks (`fallbacks: "default"`, beta
+`server-side-fallback-2026-07-01`) and top-level `cache_control` auto-caching; system prompts
+are constant strings (cacheable prefix). Without `FINSIGHT_ANTHROPIC_API_KEY` the AI endpoints
+return 503 `ai_not_configured` and nothing else changes.
+
+**Q&A flow** (`POST /research/ask {question, ticker?, market?, document_ids?}`):
+
+```mermaid
+sequenceDiagram
+    participant UI as ResearchPanel
+    participant S as services.research
+    participant R as BM25 retrieval
+    participant C as ClaudeProvider
+    participant G as grounding (pure)
+    UI->>S: question (+ company / documents)
+    S->>R: user's chunks → top FINSIGHT_AI_MAX_SOURCES (8)
+    S->>S: one source per retrieved page + "FinSight financial data" source
+    alt no sources
+        S-->>UI: 422 no_sources (model not called)
+    end
+    S->>C: custom-content documents, citations enabled
+    C-->>S: text blocks with content_block_location citations
+    S->>G: verify each citation against its blocks; flag uncited figures
+    G-->>UI: segments + citations + sources + grounding status + issues
+```
+
+- **Sources only:** (a) retrieved pages of the user's own reports (blocks = chunks), (b) one
+  "FinSight financial data" document whose blocks are labelled lines for the latest two fiscal
+  years of one reporting basis — e.g. `Revenue, FY2026 (2026-03-31), consolidated: ₹12,000.00
+  crore. Reported; source demo, retrieved 2026-10-16.` — plus calculated ratios labelled
+  `Calculated by FinSight as <formula>`. Nothing else (no web, no model memory) is offered.
+- **Prompt rules** (system prompt): answer only from the documents; cite every number/claim;
+  say "not available in the provided sources" instead of estimating; keep reported /
+  calculated / assumption distinct; never mix consolidated and standalone; EOD prices are never
+  "live"; keep source units (crore/lakh); no investment advice.
+- **Citation validation** (`app/ai/grounding.py`): a citation is kept only if its document and
+  block range exist and the cited text occurs in those blocks. Invalid citations are removed
+  (`invalid_citation`); any segment containing a digit without a valid citation is flagged
+  `uncited_figure` (highlighted in the UI); an answer with no valid citation is `ungrounded`.
+  Status ∈ `grounded | partially_grounded | ungrounded`.
+- **Output** is `kind = ai_explanation` with model name, token usage and a disclaimer.
+  Refusal (`stop_reason == refusal` after fallbacks) → 422 `ai_refused`; provider 429 → 503
+  `ai_rate_limited`; other API/network errors → 502 `ai_unavailable`.
+- Answers are not persisted (Phase 6 reports re-run them on request).
+
+### 12.1 Research reports and export (Phase 6)
+
+`POST /reports {ticker, market?, exchange?, basis?, include_ai?, title?}` (compute rate limit;
+`include_ai` also consumes the per-user AI budget and needs the API key, else 503) builds an
+**immutable snapshot** (`research_reports.content`, JSON with Decimals as strings) via
+`services/reports.py`. Sections, each with figures/tables labelled by provenance:
+
+| Section | Content | Provenance |
+|---|---|---|
+| Company and listings | name, ticker, ISIN (or "not provided"), per-exchange listings | market |
+| Market data (EOD) | latest close of the resolved listing (+ stale note), 1-year raw price change | market / calculated |
+| Financial statements | up to 5 fiscal years of one basis, ₹ crore, "—" = not reported | reported |
+| Ratios | latest FY ratios with formulas; missing inputs named | calculated |
+| Valuation multiples | from the valuation snapshot, with its issues | calculated |
+| Corporate actions | latest 12 | reported |
+| Figures from uploaded reports | **verified** extracted facts only, with page and quote | extracted |
+| Your saved DCF valuations | latest 5 (WACC, terminal, value per share) | assumption |
+| AI summary (cited) | fixed question answered via §12 with grounding status and sources | ai_explanation |
+
+A section without data is kept with `status = unavailable` and the reason (e.g. a dual-listed
+company without `exchange` → market section unavailable rather than a guessed listing).
+
+Exports: `GET /reports/{id}/export?format=json|md|html|csv` with `Content-Disposition:
+attachment` and `X-Content-Type-Options: nosniff`. HTML is self-contained, every value escaped,
+and carries `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` so the
+downloaded file cannot run scripts; it is print-ready ("print to PDF" — no server-side PDF
+renderer). CSV text cells beginning with `= + - @ \t \r` are prefixed with `'` (formula
+injection); the numeric `value` column stays a plain decimal. Indian digit grouping
+(`12,34,56,789.00`) is applied by `reports/render.py`.
 
 ## 13. Authentication, authorization, security
 
@@ -645,6 +1036,19 @@ Implemented:
 - No refresh tokens or server-side revocation yet: a stolen token is valid until expiry
   (deactivating the user revokes it immediately).
 
+**Uploads:** size capped while reading (413), PDF magic check, encrypted PDFs rejected, page
+limit, owner-scoped storage of extracted text only (no file bytes), per-user upload rate limit
+and document quota. Upload text is untrusted data: it is only ever placed in citable document
+blocks, never in the system prompt.
+
+**Exports:** HTML report downloads are escaped and script-blocked by CSP; CSV exports are
+protected against formula injection; downloads use `Content-Disposition: attachment` +
+`nosniff`.
+
+**Browser session:** the SPA keeps the FinSight access token in memory mirrored to
+`sessionStorage` (cleared when the tab closes; a 401 clears it). No provider keys exist in the
+browser and the browser never calls Tej, Yahoo or SEC directly.
+
 **Authorization:**
 - Every endpoint except `/health/*`, `/auth/register`, `/auth/login` requires a valid token.
 - Company and financial data are shared reference data, readable by any authenticated user.
@@ -660,7 +1064,10 @@ Implemented:
 |---|---|---|
 | `auth` (register, login) | client IP | 10 / minute |
 | `compute` (calculators, save valuation) | user | 60 / minute |
-| `ingest` | user | 20 / hour |
+| `ingest` (statement ingest, directory sync) | user | 20 / hour |
+| `market` (quote, prices, corporate actions, valuation snapshot) | user | 120 / minute |
+| `ai` (research ask, fact extraction) | user | 30 / hour |
+| `upload` (documents) | user | 20 / hour |
 
 Exceeded → 429 `rate_limited` with `Retry-After`. Limits are **per process**: with N replicas
 the effective limit is N×; a shared store (Redis) is required before horizontal scaling. Client
@@ -669,7 +1076,8 @@ reverse proxy in production (Compose uses `*`, acceptable only because port 8000
 127.0.0.1).
 
 **Input hardening:** request models use `extra="forbid"`; tickers are restricted to
-`[A-Za-z0-9.-]{1,20}`; search escapes SQL `LIKE` wildcards; all SQL goes through SQLAlchemy
+`[A-Za-z0-9.&-]{1,30}` (NSE symbols such as `M&M`; the frontend URL-encodes them), Tej
+symbols are re-validated against the provider pattern before any request; search escapes SQL `LIKE` wildcards; all SQL goes through SQLAlchemy
 bound parameters; list sizes are bounded (sensitivity axes ≤ 15, peers ≤ 50, ≤ 30 forecast
 years).
 
@@ -680,9 +1088,16 @@ years).
   `method, path, status, duration_ms`. Toggle with `FINSIGHT_LOG_JSON`.
 - **Errors:** see §4.2.
   Structured events: `user_registered`, `login_succeeded`, `login_failed` (no email logged),
-  `ingested_financials` (ticker, provider, periods, warnings), `provider_error`,
-  `sec_edgar_retry`, `unhandled_exception`. Passwords, tokens and secrets are never logged.
-- **Retries:** backend → SEC EDGAR as in §7. Frontend TanStack Query retries non-4xx failures
+  `ingested_financials` (ticker, market, provider, periods, warnings), `provider_error`,
+  `sec_edgar_retry`, `tej_retry`, `yfinance_error`, `instrument_directory_synced`,
+  `directory_sync_failed`, `unhandled_exception`. Passwords, tokens and secrets are never logged.
+- **Retries:** backend → Tej / SEC EDGAR as in §7. yfinance has its own internal behaviour;
+  its rate-limit errors map to 503 `provider_rate_limited`.
+- **Caching:** `app/core/cache.py` TTL cache (default 900 s, max 2048 entries, LRU) on
+  `app.state.market_cache` for bars, corporate actions and provider status. Failures are not
+  cached. Responses report `cached: true/false`. Per process only.
+- **Freshness:** "today" is the IST date (`app.state.today`, injectable in tests); staleness as
+  in §4.9. Frontend TanStack Query retries non-4xx failures
   up to 2 times.
 - **Transactions:** one session per request (`get_db`); services commit explicitly. Ingestion
   commits once after all periods are written, so a failed ingest leaves earlier data intact.
@@ -694,13 +1109,118 @@ years).
 | Workflow | Command | Where |
 |----------|---------|-------|
 | Backend tests | `pytest` (in `backend/`): domain unit, provider (MockTransport), API integration — no network | local (SQLite), CI (Postgres) |
-| Live EDGAR smoke test | `FINSIGHT_SEC_USER_AGENT=… python -m app.cli ingest AAPL` against a scratch DB | manual |
+| Live EDGAR smoke test | `FINSIGHT_SEC_USER_AGENT=… python -m app.cli ingest --market US AAPL` against a scratch DB | manual |
+| Live Tej smoke test | `FINSIGHT_MARKET_DATA_PROVIDER=tej python -m app.cli sync-instruments` then quote/prices via the API (done 2026-10-18: RELIANCE NSE ₹1211.2 / BSE ₹1210 on 2026-10-16, M&M prices, 25 actions) | manual |
+| Live yfinance check | output shape of RELIANCE.NS / RELIANCE.BO / M&M.NS inspected in an isolated venv (2026-10-18) | manual |
 | Backend lint/format/types | `ruff check .`, `ruff format --check .`, `mypy` | local, CI |
 | Frontend tests | `npm test` (Vitest + RTL, jsdom) | local, CI |
 | Frontend lint/build | `npm run lint`, `npm run build` (includes `tsc`) | local, CI |
 | Full stack | `docker compose up --build` | local |
 | Image builds | `docker build ./backend`, `docker build ./frontend` | CI `docker` job |
-| E2E (Playwright) | ⏳ Phase 4 | — |
+| E2E (Playwright) | `npm run e2e` (in `frontend/`; starts the API via `backend/scripts/e2e_server.py` and `vite preview`) | local, CI `e2e` job |
+| Dependency audit | `pip-audit -r <(pip freeze)`, `npm audit` | manual (2026-10-18: clean) |
+
+CI needs no API keys and no internet for tests: Tej is exercised with `httpx.MockTransport`,
+yfinance with fakes (the library is an optional extra and is not installed in CI), and the API
+journey with the deterministic demo provider pinned to 2026-10-19.
+
+Results on 2026-10-18 after Phase 7 (local, SQLite): backend **279 passed, 1 skipped**
+(Postgres-only test; baseline before the India migration: 179 passed, 1 skipped); ruff, ruff
+format, mypy clean. Frontend **35 tests passed** (baseline 8); eslint clean; `npm run build`
+passes (pages lazy-loaded). E2E **1 passed**. CI additionally runs the backend suite on
+PostgreSQL and the Compose smoke test.
 
 Container start-up: backend runs `alembic upgrade head` then `uvicorn`. Compose waits for
 `db` healthy → `backend` healthy (`/health/ready`) → `frontend`.
+
+## 16. Data licensing, usage restrictions and known limitations
+
+Summaries of terms as checked on 2026-10-18; they are not legal advice. Check the providers'
+current terms before publishing or commercializing FinSight.
+
+- **Tej API:** code MIT-licensed; keyless data free. Tej's own paid tiers separate *personal
+  use* (Retail) from *commercial use* (Pro, ₹4,999/month), so commercial redistribution of Tej
+  data should be confirmed with Tej. The underlying bhavcopy/corporate-action data originates
+  from NSE/BSE and remains subject to their data policies.
+- **yfinance / Yahoo Finance:** unofficial; Yahoo data is for personal use only. Do not enable
+  `FINSIGHT_FUNDAMENTALS_PROVIDER=yfinance` for a commercial or public deployment.
+- **NSE/BSE:** real-time and redistributable exchange data require exchange licences (paid).
+  FinSight does not scrape exchange websites or bypass access controls.
+- **Demo data:** synthetic; never present it as real.
+
+Known limitations:
+- End-of-day prices only; no intraday/live quotes (no free source with acceptable terms).
+- Prices are unadjusted; long charts show jumps at splits/bonuses (adjusted series need a free
+  Tej key, not integrated).
+- BSE history via Tej starts 2024-07-08.
+- No free source for shareholding patterns, exchange announcements, or explicitly
+  consolidated/standalone Indian statements; with yfinance the basis is `unspecified`.
+- No restatement history for Indian statements; re-ingest overwrites the same period/basis.
+- The instrument directory contains only instruments that traded on the snapshot date and
+  includes non-equity instruments (ETFs, fund units) as the exchanges list them; no
+  instrument-type classification is invented.
+- Cache and rate limits are per process.
+- No OCR: scanned annual reports cannot be used. Retrieval is lexical (BM25), not semantic.
+- The live Claude integration is verified by request/response-shape tests, not by a live call
+  in this environment (no API key available here). The AI incurs Anthropic API costs when
+  enabled; everything else stays ₹0.
+
+## 17. Verification & security audit (Phase 7, 2026-10-18)
+
+Scope: the whole repository at the Phase 6 commit (`f9fd94d`) — backend API, providers, AI
+adapter, uploads, exports, frontend, containers, CI. Method: dependency audits, an automated
+route-authorization guard, manual review of authN/authZ, input handling, output encoding,
+secrets, SSRF, rate limits and container configuration, and an end-to-end browser test.
+
+**Dependency audits** (2026-10-18): `pip-audit` over the installed backend environment — *no
+known vulnerabilities*; `npm audit` — *0 vulnerabilities*.
+
+**Findings and fixes**
+
+| # | Area | Finding | Severity | Fix | Verified by |
+|---|---|---|---|---|---|
+| A1 | nginx | No Content-Security-Policy on the SPA | Medium | Strict CSP (`default-src 'self'`, no inline scripts, `frame-ancestors 'none'`, `object-src 'none'`) + Permissions-Policy | CI compose smoke test checks the header |
+| A2 | nginx | `add_header` in `/assets/` silently dropped the server-level security headers there (nginx does not inherit `add_header` into a location that sets its own) | Low | Headers repeated in every location; `server_tokens off` | config review, CI smoke |
+| A3 | Frontend container | nginx ran as root | Low | `nginxinc/nginx-unprivileged` (uid 101, port 8080) | CI smoke asserts non-root uid for frontend and backend |
+| A4 | API responses | No `nosniff` / `no-store` / framing headers on API responses (authenticated JSON could be cached by intermediaries) | Low | Middleware adds `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` unless a route sets them | `tests/test_security_audit.py` |
+| A5 | Directory sync | Any authenticated user could trigger full upstream snapshot fetches (free-provider abuse) | Low | Global per-provider cooldown (10 min) on `POST /market/directory/sync` → 429 `sync_cooldown` + `Retry-After`; CLI unaffected | `test_india_api.py::test_market_status_and_directory_sync` |
+| A6 | Sign-in redirect | `next` accepted backslash forms (`/\host`) | Low | Only `/`-rooted paths without `//` or `\` | `Login.test.tsx` |
+| A7 | AI prompt injection | Uploaded report text could contain instructions | Medium (mitigated) | System prompts state document text is data, not instructions; documents are only ever passed as citable document blocks; all citations verified; figures without valid citations flagged; extracted facts verified against page text | `test_ai_units.py`, grounding tests |
+
+**Automated guards added**
+- `test_every_non_public_route_requires_authentication`: walks the OpenAPI document (every
+  mounted endpoint, 40+ operations) and asserts 401 `not_authenticated` without a token, except
+  the explicit public allow-list (health, register, login). A new unauthenticated route fails CI.
+- Forged/garbled JWTs rejected; status endpoints never contain the Anthropic key or JWT secret.
+- Owner isolation: cross-user tests for watchlists, valuations, documents (incl. AI calls never
+  made on another user's document), research questions, and reports.
+
+**Reviewed, no change needed:** SQL only via SQLAlchemy bound parameters and escaped `LIKE`;
+request models `extra="forbid"`; provider hosts fixed (no user-controlled URLs → no SSRF) and
+symbols validated before any outbound request; secrets only in backend settings (`SecretStr`)
+and never logged; 500s never echo exception text; HTML exports escaped with script-blocking CSP;
+CSV exports formula-injection safe; React renders no raw HTML (`dangerouslySetInnerHTML` unused);
+CORS uses an explicit origin list.
+
+**Residual risks / recommendations (not fixed)**
+- Access tokens live in `sessionStorage` (readable by script on XSS; CSP reduces the risk);
+  no refresh-token rotation or server-side revocation.
+- Rate limits, the provider cache and the sync cooldown are per process; use a shared store
+  (e.g. Redis) before running several replicas.
+- PDF parsing (pypdf) runs in the request with size/page limits and per-user rate limits but no
+  CPU time limit; a crafted PDF could be slow. Move extraction to a worker with a timeout before
+  public exposure.
+- Multipart bodies are parsed by Starlette before the size check; nginx's 25 MB cap is the
+  outer bound — keep the backend port private (Compose binds it to 127.0.0.1).
+- Backend Python dependencies are range-pinned without a lock file; add one (e.g. `uv lock`)
+  for reproducible builds.
+- No HSTS: TLS terminates outside this stack; add HSTS at the TLS terminator.
+- Registration reveals whether an email exists (409), accepted and rate-limited.
+- Third-party data terms (§16) must be cleared before commercial use.
+
+**End-to-end verification:** `frontend/e2e/journey.spec.ts` (Playwright, Chromium) runs the
+real API (fresh SQLite, migrations to head, demo providers, no AI key) behind the production
+build: sign-up → search → NSE listing → EOD quote with demo/freshness labels → BSE switch →
+fetch statements → consolidated/standalone toggle → ratios and multiples → DCF with prefilled
+bridge → save valuation → research report with provenance → Markdown download. Passed locally
+(1 test, 26.6 s) and runs in CI (`e2e` job).

@@ -1,8 +1,10 @@
 # CLAUDE.md — working rules for this repository
 
-FinSight is an AI-powered financial intelligence platform: FastAPI + PostgreSQL backend,
-React + Vite frontend. **Read `SYSTEM_FLOW.md` first** — it is the source of truth for what is
-actually implemented.
+FinSight is an AI-powered financial intelligence platform for **Indian listed companies
+(NSE/BSE)**: FastAPI + PostgreSQL backend, React + Vite frontend. Only ₹0 data sources may be
+integrated (demo default, Tej keyless EOD, optional yfinance); SEC EDGAR is an optional US
+market. **Read `SYSTEM_FLOW.md` first** — it is the source of truth for what is actually
+implemented.
 
 ## Commands
 
@@ -57,5 +59,5 @@ npm run build    # tsc --noEmit + vite build
 ## Phase roadmap
 
 0 inspection & docs (✅) · 1 foundation (✅) · 2 financial domain engine (✅) · 3 APIs, auth, persistence (✅) ·
-4 frontend workspace · 5 annual reports + Claude with citations · 6 reports & export ·
-7 verification & security audit.
+India-first migration, free providers (✅) · 4 frontend workspace (✅) · 5 annual reports + Claude with citations (✅) · 6 reports & export (✅) ·
+7 verification & security audit (✅).

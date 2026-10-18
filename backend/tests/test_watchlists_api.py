@@ -5,6 +5,9 @@ from fastapi.testclient import TestClient
 
 API = "/api/v1/watchlists"
 
+# These suites exercise the optional US market (SEC EDGAR via the fake provider).
+pytestmark = pytest.mark.usefixtures("us_market")
+
 
 @pytest.fixture
 def companies(client: TestClient, auth: dict[str, str]) -> None:

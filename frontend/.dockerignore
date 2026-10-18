@@ -3,3 +3,6 @@ dist
 coverage
 .env
 .env.*
+playwright-report
+test-results
+e2e

@@ -19,6 +19,9 @@ dependencies = [
     "argon2-cffi>=25.1",
     "email-validator>=2.3,<3",
     "httpx>=0.28,<1",
+    "anthropic>=1.15,<2",
+    "pypdf>=6.21,<7",
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +31,9 @@ dev = [
     "ruff>=0.17",
     "mypy>=2.4",
 ]
+# Optional, unofficial Yahoo Finance statements for Indian companies (personal use only per the
+# yfinance README). Not installed in CI; tests use fakes.
+yfinance = ["yfinance>=1.7,<2"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

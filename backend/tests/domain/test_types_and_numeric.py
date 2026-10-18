@@ -36,6 +36,11 @@ def test_domain_package_has_no_io_imports() -> None:
         ("1500", Scale.THOUSANDS, Scale.MILLIONS, "1.5"),
         ("2", Scale.BILLIONS, Scale.MILLIONS, "2000"),
         ("7", Scale.UNITS, Scale.UNITS, "7"),
+        # Indian scales: 1 crore = 100 lakh = 10 million = 10^7 rupees.
+        ("1", Scale.CRORES, Scale.LAKHS, "100"),
+        ("1", Scale.CRORES, Scale.MILLIONS, "10"),
+        ("10572190000000", Scale.UNITS, Scale.CRORES, "1057219"),
+        ("250", Scale.LAKHS, Scale.UNITS, "25000000"),
     ],
 )
 def test_rescale(value: str, src: Scale, dst: Scale, expected: str) -> None:

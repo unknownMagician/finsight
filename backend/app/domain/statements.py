@@ -17,6 +17,7 @@ from app.domain.types import (
     Amount,
     CurrencyCode,
     DomainModel,
+    ReportingBasis,
     ReportingPeriod,
     Scale,
     SourceRef,
@@ -76,6 +77,7 @@ class FinancialPeriodData(DomainModel):
     scale: Scale
     source: SourceRef
     kind: ValueKind = ValueKind.REPORTED
+    basis: ReportingBasis = "unspecified"
     income: IncomeStatement = IncomeStatement()
     balance: BalanceSheet = BalanceSheet()
     cash_flow: CashFlowStatement = CashFlowStatement()
