@@ -4,7 +4,17 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import auth, calculations, companies, health, market, valuations, watchlists
+from app.api import (
+    auth,
+    calculations,
+    companies,
+    documents,
+    health,
+    market,
+    research,
+    valuations,
+    watchlists,
+)
 from app.core.cache import TTLCache
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
@@ -48,7 +58,17 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     api = APIRouter(prefix=API_PREFIX)
-    for module in (health, auth, companies, market, calculations, watchlists, valuations):
+    for module in (
+        health,
+        auth,
+        companies,
+        market,
+        calculations,
+        watchlists,
+        valuations,
+        documents,
+        research,
+    ):
         api.include_router(module.router)
     app.include_router(api)
     return app

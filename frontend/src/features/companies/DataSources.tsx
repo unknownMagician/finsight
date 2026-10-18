@@ -42,7 +42,6 @@ export function DataSources() {
               {status.data.unavailable_capabilities.map((c) => CAPABILITY_LABEL[c] ?? c).join(", ")}.
             </p>
           ) : null}
-          <p>AI-generated research reports are not available yet (planned).</p>
         </div>
       )}
     </Panel>

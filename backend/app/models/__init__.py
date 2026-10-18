@@ -2,6 +2,7 @@
 
 from app.db.base import Base
 from app.models.company import Company, FinancialLineItem, FinancialPeriod, Instrument
+from app.models.document import Document, DocumentChunk, DocumentFact, DocumentPage
 from app.models.user import User
 from app.models.valuation import SavedValuation
 from app.models.watchlist import Watchlist, WatchlistItem
@@ -9,6 +10,10 @@ from app.models.watchlist import Watchlist, WatchlistItem
 __all__ = [
     "Base",
     "Company",
+    "Document",
+    "DocumentChunk",
+    "DocumentFact",
+    "DocumentPage",
     "FinancialLineItem",
     "FinancialPeriod",
     "Instrument",

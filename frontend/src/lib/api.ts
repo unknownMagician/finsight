@@ -39,7 +39,8 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       ...init,
       headers: {
         Accept: "application/json",
-        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        // JSON bodies are strings; FormData (uploads) sets its own multipart boundary.
+        ...(typeof init?.body === "string" ? { "Content-Type": "application/json" } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...init?.headers,
       },

@@ -9,6 +9,8 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.ai.base import LLMProvider
+from app.ai.claude import ClaudeProvider
 from app.core.cache import TTLCache
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -98,6 +100,8 @@ def limit_by_user(scope: str, setting: str, window_seconds: float) -> Callable[.
 AuthRateLimit = Depends(limit_by_ip("auth", "rate_limit_auth_per_minute", 60))
 ComputeRateLimit = Depends(limit_by_user("compute", "rate_limit_compute_per_minute", 60))
 IngestRateLimit = Depends(limit_by_user("ingest", "rate_limit_ingest_per_hour", 3600))
+AIRateLimit = Depends(limit_by_user("ai", "rate_limit_ai_per_hour", 3600))
+UploadRateLimit = Depends(limit_by_user("upload", "rate_limit_upload_per_hour", 3600))
 MarketDataRateLimit = Depends(limit_by_user("market", "rate_limit_market_data_per_minute", 60))
 
 
@@ -186,3 +190,27 @@ def parse_uuid(raw: str, resource: str) -> uuid.UUID:
         return uuid.UUID(raw)
     except ValueError:
         raise AppError("not_found", f"{resource} not found", 404) from None
+
+
+def get_llm(request: Request) -> LLMProvider:
+    """The AI provider; 503 ``ai_not_configured`` without FINSIGHT_ANTHROPIC_API_KEY."""
+    llm: LLMProvider | None = getattr(request.app.state, "llm", None)
+    if llm is not None:
+        return llm
+    settings = get_settings()
+    if settings.anthropic_api_key is None:
+        raise AppError(
+            "ai_not_configured",
+            "The AI research assistant is not configured (FINSIGHT_ANTHROPIC_API_KEY)",
+            503,
+        )
+    llm = ClaudeProvider(
+        settings.anthropic_api_key.get_secret_value(),
+        model=settings.ai_model,
+        timeout=settings.ai_timeout_seconds,
+    )
+    request.app.state.llm = llm
+    return llm
+
+
+LLM = Annotated[LLMProvider, Depends(get_llm)]

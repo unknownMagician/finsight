@@ -23,6 +23,10 @@ const ValuationsPage = lazy(() =>
   import("../features/valuations/ValuationsPage").then((m) => ({ default: m.ValuationsPage })),
 );
 
+const DocumentsPage = lazy(() =>
+  import("../features/documents/DocumentsPage").then((m) => ({ default: m.DocumentsPage })),
+);
+
 function guarded(element: ReactNode) {
   return (
     <RequireAuth>
@@ -41,6 +45,7 @@ export const routes: RouteObject[] = [
       { path: "calculators", element: guarded(<CalculatorsPage />) },
       { path: "watchlists", element: guarded(<WatchlistsPage />) },
       { path: "valuations", element: guarded(<ValuationsPage />) },
+      { path: "documents", element: guarded(<DocumentsPage />) },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

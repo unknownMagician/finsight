@@ -41,7 +41,7 @@ Provider verification (docs, free limits, terms, live check) is recorded in §7.
 | F0 | Health checks (`/health/live`, `/health/ready`) | ✅ | 1 | `backend/tests/test_health.py`, `frontend/src/features/health/SystemStatus.test.tsx` |
 | F0 | Uniform error envelope + request IDs + JSON logging | ✅ | 1 | `backend/tests/test_health.py` |
 | F0 | Config via env, secrets masked, blank = unset | ✅ | 1, 3 | `backend/tests/test_config.py` |
-| F0 | Alembic migrations (0001 baseline, 0002 core tables, 0003 India market) | ✅ SQLite · ⏳ CI Postgres for 0003 | 1, 3, IN | `tests/test_migrations.py` (round-trip, drift guard, 0003 data preservation); 0003 not yet run on Postgres (no local Postgres; CI will) |
+| F0 | Alembic migrations (0001 baseline … 0004 documents) | ✅ SQLite · ✅ CI Postgres (0003 verified in run 39107495409) | 1, 3, IN, 5 | `tests/test_migrations.py` (round-trip, drift guard, 0003 data preservation) |
 | F0 | Docker images | ✅ | 1 | Both images build in CI `docker` job |
 | F0 | Docker Compose stack (`up`) | 🟡 | 1 | `docker compose config` validated; full `up` not yet run (no local Docker daemon) |
 | F0 | GitHub Actions CI | ✅ (Phase 3) · ⏳ not yet run on this change | 1 | Green on `main` and `dev/claude` up to `d29e0a6` |
@@ -63,8 +63,8 @@ Provider verification (docs, free limits, terms, live check) is recorded in §7.
 | F4 | Comparable companies | ✅ engine · ✅ API · ✅ UI (peers from FinSight valuation snapshots) | 2, 3, 4 | `tests/domain/test_comps.py`, `tests/test_calculations_api.py` |
 | F5 | Forecast (bull/base/bear) | ✅ engine · ✅ API · ✅ UI | 2, 3, 4 | `tests/domain/test_forecast.py`, `tests/test_calculations_api.py` |
 | F5 | Saved DCF valuations (owner-scoped, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_valuations_api.py`, `test_india_api.py` |
-| F6 | Annual report PDF upload & fact extraction | ⏳ | 5 | — |
-| F7 | AI research assistant with citations | ⏳ | 5 | — (no AI code exists yet; nothing to migrate) |
+| F6 | Annual report PDF upload (text layer), retrieval, AI fact extraction with page verification | ✅ API · ✅ UI · 🟡 live Claude call not exercised (no API key here) | 5 | `tests/test_ai_units.py`, `tests/test_documents_research_api.py` (FakeLLM), `Research.test.tsx` |
+| F7 | AI research assistant with verified citations (Claude) | ✅ API · ✅ UI · 🟡 live Claude call not exercised (no API key here) | 5 | adapter request/response shape tests with a recording client; grounding tests; API tests with FakeLLM |
 | F8 | Research report generation & export | ⏳ | 6 | — |
 | F9 | Watchlists (owner-scoped CRUD, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_watchlists_api.py`, `test_india_api.py::test_indian_watchlist_and_valuation_link` |
 | S1 | Authentication (Argon2id + JWT) & resource-level authorization | ✅ API · ✅ UI sign-in | 3, 4 | `tests/test_auth_api.py`, `test_security.py`, cross-user tests; frontend redirect test |
@@ -450,6 +450,13 @@ decimals); requests may send numbers or strings. "Auth" = Bearer token required.
 | GET | `/valuations` | ✓ | — | — | `SavedValuationOut[]` (newest first) |
 | POST | `/valuations` | ✓ | compute/user | `{name, ticker?, market?, inputs: DCFInputs}` | 201 `SavedValuationOut` (incl. `market`) |
 | GET/DELETE | `/valuations/{id}` | ✓ owner | — | — | `SavedValuationOut` / 204; 404 |
+| POST | `/documents` | ✓ | upload/user | multipart `file, title, ticker?, market?, fiscal_year?, doc_type?` | 201 `DocumentOut`; 409/413/422 |
+| GET | `/documents?ticker=&market=` | ✓ owner | — | — | `DocumentOut[]` (incl. facts) |
+| GET/DELETE | `/documents/{id}` | ✓ owner | — | — | `DocumentOut` / 204; 404 |
+| GET | `/documents/{id}/pages/{n}` | ✓ owner | — | — | `DocumentPageOut {page_number, text}` |
+| POST | `/documents/{id}/facts/extract` | ✓ owner | ai/user | `{metrics?: string[≤20]}` | `DocumentOut` with verified/unverified facts; 422/502/503 |
+| GET | `/research/status` | ✓ | — | — | `{configured, provider, model}` |
+| POST | `/research/ask` | ✓ | ai/user | `{question 3–1000, ticker?, market?, document_ids?[≤10]}` | `ResearchAnswerOut {segments[{text, citations[{source, cited_text, label, document_id, page_number}]}], sources[], grounding, issues[], model, tokens, disclaimer}`; 404/422/502/503 |
 
 Schemas live in `app/schemas.py` (transport) and `app/domain/*` (calculator I/O). Per-user
 limits: 20 watchlists, 100 companies per watchlist, 200 saved valuations.
@@ -467,7 +474,9 @@ Error codes: `validation_error`, `invalid_assumptions`, `not_authenticated`,
 `limit_exceeded`, `provider_unavailable`, `provider_not_configured`, `provider_rate_limited`
 (503, free-tier limit reached), `capability_unavailable` (501, provider does not offer the
 data), `market_data_not_found`, `listing_not_found`, `ambiguous_listing` (409,
-`details.listings`), `invalid_range`, `invalid_valuation_inputs`, `invalid_request`,
+`details.listings`), `invalid_range`, `invalid_valuation_inputs`, `invalid_request`, `invalid_pdf`,
+`file_too_large` (413), `document_exists`, `no_text`, `no_sources`, `ai_not_configured`,
+`ai_refused`, `ai_rate_limited`, `ai_unavailable`,
 `http_error`, `internal_error`.
 
 `CompanyOut` changed shape: `cik` is now nullable (US only) and `market`, `isin` and
@@ -486,6 +495,7 @@ data), `market_data_not_found`, `listing_not_found`, `ambiguous_listing` (409,
 |---|---|
 | `0001` | Baseline (no tables) |
 | `0002` | users, companies, financial_periods, financial_line_items, watchlists, watchlist_items, saved_valuations |
+| `0004` | documents (owner-scoped, UK owner+sha256), document_pages, document_chunks, document_facts |
 | `0003` | India market: `instruments` table; `companies.market` (existing rows backfilled `US`), `companies.isin` (unique, nullable), `companies.cik` nullable, `companies.ticker` → 30 chars and unique per (market, ticker); `financial_periods.basis` (default `unspecified`), unique on (company, fiscal_year, fiscal_period, basis). Downgrade deletes IN rows only (0002 cannot represent them). |
 
 ```mermaid
@@ -882,17 +892,83 @@ TV share = 17/21 ≈ 81% (flagged `terminal_value_dominant`).
 
 ## 11. PDF upload, extraction, chunking, retrieval
 
-⏳ Planned (Phase 5). nginx already caps request bodies at 25 MB for `/api/`.
+`POST /documents` (multipart: `file`, `title`, optional `ticker`/`market`, `fiscal_year`,
+`doc_type` ∈ annual_report | quarterly_results | other), upload rate limit 20/hour/user.
+
+1. **Limits & validation:** body read with a hard cap of `FINSIGHT_UPLOAD_MAX_MB` (default 20;
+   nginx caps at 25) → 413 `file_too_large`; must start with `%PDF-`, not encrypted, ≤
+   `FINSIGHT_UPLOAD_MAX_PAGES` (600) → otherwise 422 `invalid_pdf`. ≤ 50 documents per user;
+   the same file (SHA-256) twice for one user → 409 `document_exists`.
+2. **Extraction** (`app/documents/pdf.py`, pypdf): text layer only, per page, whitespace
+   normalized. Scanned/image-only PDFs are stored with `status = no_text` and cannot be searched,
+   cited or extracted (**no OCR**). The PDF bytes are **not stored**; only text + SHA-256.
+3. **Chunking** (`app/documents/chunking.py`): paragraphs packed to ~1,200 chars (max 2,000),
+   never crossing a page, so every chunk and citation maps to exactly one page.
+4. **Retrieval** (`app/ai/retrieval.py`): deterministic BM25 over the asking user's chunks
+   (filtered by company or explicit `document_ids`); numbers are tokenized with Indian grouping
+   commas removed. No embeddings, no external service.
+5. **Ownership:** documents, pages, chunks and facts are owner-scoped like watchlists; another
+   user's document is a 404 and is never retrieved for someone else's question.
+
+**Fact extraction** (`POST /documents/{id}/facts/extract`, AI rate limit 30/hour/user): the 12
+pages most relevant to the requested metrics (BM25) are sent to Claude with a JSON-schema
+structured output (`RawFact`: metric, value as printed, unit as printed — crores/lakhs/…,
+basis, period, page, verbatim quote). Each fact is then **verified** (`app/ai/grounding.py`):
+the quote must occur on that page (whitespace/typographic-quote insensitive) and the value must
+appear as a number in the quote; facts citing a page that was not sent are unverified.
+Unverified facts are stored with the reason and shown as such, and are never used as data.
+Re-extraction replaces the document's facts. Stored with model name and timestamp
+(`kind = extracted`).
 
 ## 12. AI prompting, retrieval, citation validation
 
-⏳ Planned (Phase 5). The Claude API key is a backend-only setting
-(`FINSIGHT_ANTHROPIC_API_KEY`); all model calls will go through a backend provider adapter.
-No AI code existed before the India migration, so nothing was migrated. Requirements carried
-into Phase 5: build context only from a resolved company **and listing** (no ambiguous
-exchange); pass each figure with provider, period, basis, currency, scale and freshness; quote
-`nature`/`as_of` so EOD prices are never called real-time; describe unavailable capabilities
-(from `/market/status`) as unavailable.
+**Adapter** (`app/ai/claude.py`, official `anthropic` SDK 1.x, backend only, behind the
+`LLMProvider` protocol in `app/ai/base.py`). Model `FINSIGHT_AI_MODEL` (default
+`claude-opus-5-5`), timeout `FINSIGHT_AI_TIMEOUT_SECONDS` (120 s), SDK retries 2. Every request
+uses server-side refusal fallbacks (`fallbacks: "default"`, beta
+`server-side-fallback-2026-07-01`) and top-level `cache_control` auto-caching; system prompts
+are constant strings (cacheable prefix). Without `FINSIGHT_ANTHROPIC_API_KEY` the AI endpoints
+return 503 `ai_not_configured` and nothing else changes.
+
+**Q&A flow** (`POST /research/ask {question, ticker?, market?, document_ids?}`):
+
+```mermaid
+sequenceDiagram
+    participant UI as ResearchPanel
+    participant S as services.research
+    participant R as BM25 retrieval
+    participant C as ClaudeProvider
+    participant G as grounding (pure)
+    UI->>S: question (+ company / documents)
+    S->>R: user's chunks → top FINSIGHT_AI_MAX_SOURCES (8)
+    S->>S: one source per retrieved page + "FinSight financial data" source
+    alt no sources
+        S-->>UI: 422 no_sources (model not called)
+    end
+    S->>C: custom-content documents, citations enabled
+    C-->>S: text blocks with content_block_location citations
+    S->>G: verify each citation against its blocks; flag uncited figures
+    G-->>UI: segments + citations + sources + grounding status + issues
+```
+
+- **Sources only:** (a) retrieved pages of the user's own reports (blocks = chunks), (b) one
+  "FinSight financial data" document whose blocks are labelled lines for the latest two fiscal
+  years of one reporting basis — e.g. `Revenue, FY2026 (2026-03-31), consolidated: ₹12,000.00
+  crore. Reported; source demo, retrieved 2026-10-16.` — plus calculated ratios labelled
+  `Calculated by FinSight as <formula>`. Nothing else (no web, no model memory) is offered.
+- **Prompt rules** (system prompt): answer only from the documents; cite every number/claim;
+  say "not available in the provided sources" instead of estimating; keep reported /
+  calculated / assumption distinct; never mix consolidated and standalone; EOD prices are never
+  "live"; keep source units (crore/lakh); no investment advice.
+- **Citation validation** (`app/ai/grounding.py`): a citation is kept only if its document and
+  block range exist and the cited text occurs in those blocks. Invalid citations are removed
+  (`invalid_citation`); any segment containing a digit without a valid citation is flagged
+  `uncited_figure` (highlighted in the UI); an answer with no valid citation is `ungrounded`.
+  Status ∈ `grounded | partially_grounded | ungrounded`.
+- **Output** is `kind = ai_explanation` with model name, token usage and a disclaimer.
+  Refusal (`stop_reason == refusal` after fallbacks) → 422 `ai_refused`; provider 429 → 503
+  `ai_rate_limited`; other API/network errors → 502 `ai_unavailable`.
+- Answers are not persisted (Phase 6 reports re-run them on request).
 
 ## 13. Authentication, authorization, security
 
@@ -923,6 +999,11 @@ Implemented:
 - No refresh tokens or server-side revocation yet: a stolen token is valid until expiry
   (deactivating the user revokes it immediately).
 
+**Uploads:** size capped while reading (413), PDF magic check, encrypted PDFs rejected, page
+limit, owner-scoped storage of extracted text only (no file bytes), per-user upload rate limit
+and document quota. Upload text is untrusted data: it is only ever placed in citable document
+blocks, never in the system prompt.
+
 **Browser session:** the SPA keeps the FinSight access token in memory mirrored to
 `sessionStorage` (cleared when the tab closes; a 401 clears it). No provider keys exist in the
 browser and the browser never calls Tej, Yahoo or SEC directly.
@@ -944,6 +1025,8 @@ browser and the browser never calls Tej, Yahoo or SEC directly.
 | `compute` (calculators, save valuation) | user | 60 / minute |
 | `ingest` (statement ingest, directory sync) | user | 20 / hour |
 | `market` (quote, prices, corporate actions, valuation snapshot) | user | 120 / minute |
+| `ai` (research ask, fact extraction) | user | 30 / hour |
+| `upload` (documents) | user | 20 / hour |
 
 Exceeded → 429 `rate_limited` with `Retry-After`. Limits are **per process**: with N replicas
 the effective limit is N×; a shared store (Redis) is required before horizontal scaling. Client
@@ -1033,4 +1116,7 @@ Known limitations:
   includes non-equity instruments (ETFs, fund units) as the exchanges list them; no
   instrument-type classification is invented.
 - Cache and rate limits are per process.
-- AI research and report generation are not implemented yet (Phases 5–6).
+- No OCR: scanned annual reports cannot be used. Retrieval is lexical (BM25), not semantic.
+- The live Claude integration is verified by request/response-shape tests, not by a live call
+  in this environment (no API key available here). The AI incurs Anthropic API costs when
+  enabled; everything else stays ₹0.

@@ -307,3 +307,115 @@ class SavedValuationOut(Schema):
     inputs: DCFInputs
     result: dict[str, object]
     created_at: datetime
+
+
+# --- documents & AI research --------------------------------------------------------------------
+
+
+class CompanyRefOut(Schema):
+    market: str
+    ticker: str
+    name: str
+
+
+class DocumentFactOut(Schema):
+    id: int
+    metric: str
+    value: Decimal
+    unit: str
+    currency: str | None
+    period_label: str | None
+    period_end: date | None
+    basis: str
+    page_number: int
+    quote: str
+    status: str  # verified | unverified
+    verification_note: str | None
+    model: str
+    extracted_at: datetime
+    kind: str = "extracted"  # read by the AI from the page; verified against its text
+
+
+class DocumentOut(Schema):
+    id: uuid.UUID
+    title: str
+    doc_type: str
+    fiscal_year: int | None
+    filename: str
+    size_bytes: int
+    page_count: int
+    pages_with_text: int
+    status: str  # ready | no_text
+    company: CompanyRefOut | None
+    facts: list[DocumentFactOut]
+    created_at: datetime
+
+
+class DocumentPageOut(Schema):
+    page_number: int
+    text: str
+
+
+class ExtractFactsRequest(Schema):
+    metrics: (
+        list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=100)]]
+        | None
+    ) = Field(default=None, max_length=20)
+
+
+class ResearchAskRequest(Schema):
+    question: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=3, max_length=1000)
+    ]
+    ticker: Ticker | None = None
+    market: Market | None = None
+    document_ids: list[uuid.UUID] | None = Field(default=None, max_length=10)
+
+
+class CitationOut(Schema):
+    source: int  # 1-based index into ResearchAnswerOut.sources
+    cited_text: str
+    label: str
+    document_id: uuid.UUID | None
+    page_number: int | None
+
+
+class AnswerSegmentOut(Schema):
+    text: str
+    citations: list[CitationOut]
+
+
+class ResearchSourceOut(Schema):
+    number: int
+    title: str
+    kind: str  # document_page | financial_data
+    document_id: uuid.UUID | None
+    page_number: int | None
+
+
+class GroundingIssueOut(Schema):
+    code: str
+    segment: int | None
+    message: str
+
+
+class ResearchAnswerOut(Schema):
+    question: str
+    kind: str = "ai_explanation"
+    model: str
+    grounding: str  # grounded | partially_grounded | ungrounded
+    segments: list[AnswerSegmentOut]
+    sources: list[ResearchSourceOut]
+    issues: list[GroundingIssueOut]
+    input_tokens: int
+    output_tokens: int
+    disclaimer: str = (
+        "AI-generated explanation from the cited sources only. Figures come from the cited "
+        "documents or FinSight data; uncited figures are flagged. Not investment advice."
+    )
+
+
+class ResearchStatusOut(Schema):
+    configured: bool
+    provider: str | None
+    model: str | None

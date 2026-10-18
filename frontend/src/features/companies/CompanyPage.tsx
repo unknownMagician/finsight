@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { Badge, ProviderBadge } from "../../components/DataBadges";
 import { ErrorState, Loading, Toggle, Unavailable } from "../../components/States";
 import { RatiosPanel, ValuationPanel } from "./AnalysisPanels";
+import { ResearchPanel } from "../research/ResearchPanel";
 import { useAddToWatchlist, useWatchlists } from "../watchlists/api";
 import { useCompany, useFinancials } from "./api";
 import { CorporateActionsPanel } from "./CorporateActionsPanel";
@@ -82,6 +83,12 @@ export function CompanyPage() {
           >
             Open valuation calculators
           </Link>
+          <Link
+            to={`/documents?ticker=${encodeURIComponent(data.ticker)}`}
+            className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100"
+          >
+            Annual reports
+          </Link>
           <AddToWatchlist ticker={data.ticker} />
         </div>
         {instrument?.former_symbols.length ? (
@@ -121,6 +128,7 @@ export function CompanyPage() {
         <RatiosPanel ticker={data.ticker} basis={basis} enabled={hasStatements} />
         <CorporateActionsPanel ticker={data.ticker} />
       </div>
+      <ResearchPanel ticker={data.ticker} />
       <DataSources />
     </div>
   );

@@ -20,6 +20,10 @@ EXPECTED_TABLES = {
     "watchlist_items",
     "saved_valuations",
     "instruments",
+    "documents",
+    "document_pages",
+    "document_chunks",
+    "document_facts",
 }
 
 

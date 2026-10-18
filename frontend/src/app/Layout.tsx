@@ -17,6 +17,7 @@ export function Layout() {
               <NavLink to="/calculators">Calculators</NavLink>
               <NavLink to="/watchlists">Watchlists</NavLink>
               <NavLink to="/valuations">Valuations</NavLink>
+              <NavLink to="/documents">Reports</NavLink>
             </div>
           ) : null}
           <div className="ml-auto">

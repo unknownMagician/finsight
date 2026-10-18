@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     rate_limit_compute_per_minute: int = Field(default=60, ge=1)
     rate_limit_ingest_per_hour: int = Field(default=20, ge=1)
     rate_limit_market_data_per_minute: int = Field(default=120, ge=1)
+    rate_limit_ai_per_hour: int = Field(default=30, ge=1)
+    rate_limit_upload_per_hour: int = Field(default=20, ge=1)
 
     # --- Market data (India-first) ---
     # Default market for company routes that do not pass ?market=.
@@ -68,8 +70,17 @@ class Settings(BaseSettings):
     sec_user_agent: str | None = None
     sec_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
 
-    # Reserved for Phase 5; never exposed to the frontend.
+    # --- AI research assistant (Claude) ---
+    # Backend-only; never exposed to the frontend. Without it, AI endpoints answer 503 and
+    # everything else works.
     anthropic_api_key: SecretStr | None = None
+    ai_model: str = "claude-opus-5-5"
+    ai_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
+    ai_max_sources: int = Field(default=8, ge=1, le=20)
+
+    # --- Annual report uploads ---
+    upload_max_mb: int = Field(default=20, ge=1, le=25)  # nginx caps bodies at 25 MB
+    upload_max_pages: int = Field(default=600, ge=1, le=2000)
 
     @field_validator("jwt_secret", "anthropic_api_key", "sec_user_agent", mode="before")
     @classmethod
