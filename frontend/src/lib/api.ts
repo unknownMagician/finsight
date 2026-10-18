@@ -3,8 +3,11 @@
  *
  * All requests go to same-origin `/api/v1/...` (proxied by Vite in dev, nginx in Docker).
  * Non-2xx responses are converted into `ApiError`, parsed from the backend error envelope
- * `{ error: { code, message, request_id, details } }` when present.
+ * `{ error: { code, message, request_id, details } }` when present. The signed-in user's
+ * access token is attached automatically; a 401 clears it.
  */
+
+import { getToken, setToken } from "./auth";
 
 export const API_BASE = "/api/v1";
 
@@ -30,10 +33,16 @@ interface ErrorEnvelope {
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
+  const token = getToken();
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { Accept: "application/json", ...init?.headers },
+      headers: {
+        Accept: "application/json",
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
     });
   } catch {
     throw new ApiError(0, "network_error", "Unable to reach the FinSight API", null);
@@ -41,6 +50,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
+    if (response.status === 401 && token) setToken(null);
     const err = (body as ErrorEnvelope | null)?.error;
     throw new ApiError(
       response.status,
@@ -51,4 +61,14 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     );
   }
   return body as T;
+}
+
+/** Build a query string, dropping undefined/empty values. */
+export function query(params: Record<string, string | number | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : "";
 }
