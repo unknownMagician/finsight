@@ -97,6 +97,18 @@ def limit_by_user(scope: str, setting: str, window_seconds: float) -> Callable[.
     return dependency
 
 
+def enforce_user_limit(
+    request: Request, user: User, scope: str, setting: str, window_seconds: float
+) -> None:
+    """Apply a per-user limit imperatively (same key space as ``limit_by_user``)."""
+    _enforce(
+        get_rate_limiter(request),
+        f"{scope}:user:{user.id}",
+        getattr(get_settings(), setting),
+        window_seconds,
+    )
+
+
 AuthRateLimit = Depends(limit_by_ip("auth", "rate_limit_auth_per_minute", 60))
 ComputeRateLimit = Depends(limit_by_user("compute", "rate_limit_compute_per_minute", 60))
 IngestRateLimit = Depends(limit_by_user("ingest", "rate_limit_ingest_per_hour", 3600))

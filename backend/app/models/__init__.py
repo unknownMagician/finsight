@@ -3,6 +3,7 @@
 from app.db.base import Base
 from app.models.company import Company, FinancialLineItem, FinancialPeriod, Instrument
 from app.models.document import Document, DocumentChunk, DocumentFact, DocumentPage
+from app.models.report import ResearchReport
 from app.models.user import User
 from app.models.valuation import SavedValuation
 from app.models.watchlist import Watchlist, WatchlistItem
@@ -17,6 +18,7 @@ __all__ = [
     "FinancialLineItem",
     "FinancialPeriod",
     "Instrument",
+    "ResearchReport",
     "SavedValuation",
     "User",
     "Watchlist",

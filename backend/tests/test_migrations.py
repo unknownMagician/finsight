@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "document_pages",
     "document_chunks",
     "document_facts",
+    "research_reports",
 }
 
 

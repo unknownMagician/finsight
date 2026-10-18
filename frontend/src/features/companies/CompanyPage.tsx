@@ -4,6 +4,8 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { Badge, ProviderBadge } from "../../components/DataBadges";
 import { ErrorState, Loading, Toggle, Unavailable } from "../../components/States";
 import { RatiosPanel, ValuationPanel } from "./AnalysisPanels";
+import { GenerateReport } from "../reports/ReportPages";
+import { useResearchStatus } from "../research/api";
 import { ResearchPanel } from "../research/ResearchPanel";
 import { useAddToWatchlist, useWatchlists } from "../watchlists/api";
 import { useCompany, useFinancials } from "./api";
@@ -51,6 +53,7 @@ export function CompanyPage() {
   const company = useCompany(ticker);
   const annual = useFinancials(ticker, "annual", null);
   const [basis, setBasis] = useState<ReportingBasis | null>(null);
+  const research = useResearchStatus();
 
   if (company.isPending) return <Loading />;
   if (company.isError) return <ErrorState error={company.error} />;
@@ -90,6 +93,7 @@ export function CompanyPage() {
             Annual reports
           </Link>
           <AddToWatchlist ticker={data.ticker} />
+          <GenerateReport ticker={data.ticker} exchange={exchange} aiAvailable={!!research.data?.configured} />
         </div>
         {instrument?.former_symbols.length ? (
           <p className="text-xs text-slate-500">Formerly: {instrument.former_symbols.join(", ")}</p>

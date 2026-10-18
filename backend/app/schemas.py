@@ -419,3 +419,31 @@ class ResearchStatusOut(Schema):
     configured: bool
     provider: str | None
     model: str | None
+
+
+# --- research reports -----------------------------------------------------------------------------
+
+
+class ReportCreate(Schema):
+    ticker: Ticker
+    market: Market | None = None
+    exchange: Literal["NSE", "BSE"] | None = None
+    basis: ReportingBasis | None = None
+    include_ai: bool = False
+    title: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+        | None
+    ) = None
+
+
+class ReportSummaryOut(Schema):
+    id: uuid.UUID
+    title: str
+    ticker: str
+    includes_ai: bool
+    engine_version: str
+    created_at: datetime
+
+
+class ReportOut(ReportSummaryOut):
+    content: dict[str, object]

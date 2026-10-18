@@ -11,6 +11,7 @@ from app.api import (
     documents,
     health,
     market,
+    reports,
     research,
     valuations,
     watchlists,
@@ -68,6 +69,7 @@ def create_app() -> FastAPI:
         valuations,
         documents,
         research,
+        reports,
     ):
         api.include_router(module.router)
     app.include_router(api)

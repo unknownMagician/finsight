@@ -27,6 +27,13 @@ const DocumentsPage = lazy(() =>
   import("../features/documents/DocumentsPage").then((m) => ({ default: m.DocumentsPage })),
 );
 
+const ReportsPage = lazy(() =>
+  import("../features/reports/ReportPages").then((m) => ({ default: m.ReportsPage })),
+);
+const ReportView = lazy(() =>
+  import("../features/reports/ReportPages").then((m) => ({ default: m.ReportView })),
+);
+
 function guarded(element: ReactNode) {
   return (
     <RequireAuth>
@@ -46,6 +53,8 @@ export const routes: RouteObject[] = [
       { path: "watchlists", element: guarded(<WatchlistsPage />) },
       { path: "valuations", element: guarded(<ValuationsPage />) },
       { path: "documents", element: guarded(<DocumentsPage />) },
+      { path: "reports", element: guarded(<ReportsPage />) },
+      { path: "reports/:id", element: guarded(<ReportView />) },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

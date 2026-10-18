@@ -65,7 +65,7 @@ Provider verification (docs, free limits, terms, live check) is recorded in §7.
 | F5 | Saved DCF valuations (owner-scoped, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_valuations_api.py`, `test_india_api.py` |
 | F6 | Annual report PDF upload (text layer), retrieval, AI fact extraction with page verification | ✅ API · ✅ UI · 🟡 live Claude call not exercised (no API key here) | 5 | `tests/test_ai_units.py`, `tests/test_documents_research_api.py` (FakeLLM), `Research.test.tsx` |
 | F7 | AI research assistant with verified citations (Claude) | ✅ API · ✅ UI · 🟡 live Claude call not exercised (no API key here) | 5 | adapter request/response shape tests with a recording client; grounding tests; API tests with FakeLLM |
-| F8 | Research report generation & export | ⏳ | 6 | — |
+| F8 | Research report generation (owner-scoped snapshots) & export (JSON, Markdown, CSV, script-free HTML) | ✅ API · ✅ UI | 6 | `tests/test_reports.py`, `Reports.test.tsx` |
 | F9 | Watchlists (owner-scoped CRUD, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_watchlists_api.py`, `test_india_api.py::test_indian_watchlist_and_valuation_link` |
 | S1 | Authentication (Argon2id + JWT) & resource-level authorization | ✅ API · ✅ UI sign-in | 3, 4 | `tests/test_auth_api.py`, `test_security.py`, cross-user tests; frontend redirect test |
 | S2 | Rate limiting (in-process) incl. market-data scope | ✅ single process · ⏳ shared store for multi-replica | 3 | `tests/test_security.py`, `test_india_api.py::test_market_data_rate_limit` |
@@ -456,6 +456,10 @@ decimals); requests may send numbers or strings. "Auth" = Bearer token required.
 | GET | `/documents/{id}/pages/{n}` | ✓ owner | — | — | `DocumentPageOut {page_number, text}` |
 | POST | `/documents/{id}/facts/extract` | ✓ owner | ai/user | `{metrics?: string[≤20]}` | `DocumentOut` with verified/unverified facts; 422/502/503 |
 | GET | `/research/status` | ✓ | — | — | `{configured, provider, model}` |
+| POST | `/reports` | ✓ | compute/user (+ ai/user) | `{ticker, market?, exchange?, basis?, include_ai?, title?}` | 201 `ReportOut {id, title, ticker, includes_ai, engine_version, created_at, content}`; 404/503 |
+| GET | `/reports` | ✓ owner | — | — | `ReportSummaryOut[]` |
+| GET/DELETE | `/reports/{id}` | ✓ owner | — | — | `ReportOut` / 204; 404 |
+| GET | `/reports/{id}/export?format=json\|md\|html\|csv` | ✓ owner | — | — | file download |
 | POST | `/research/ask` | ✓ | ai/user | `{question 3–1000, ticker?, market?, document_ids?[≤10]}` | `ResearchAnswerOut {segments[{text, citations[{source, cited_text, label, document_id, page_number}]}], sources[], grounding, issues[], model, tokens, disclaimer}`; 404/422/502/503 |
 
 Schemas live in `app/schemas.py` (transport) and `app/domain/*` (calculator I/O). Per-user
@@ -495,6 +499,7 @@ data), `market_data_not_found`, `listing_not_found`, `ambiguous_listing` (409,
 |---|---|
 | `0001` | Baseline (no tables) |
 | `0002` | users, companies, financial_periods, financial_line_items, watchlists, watchlist_items, saved_valuations |
+| `0005` | research_reports (owner-scoped JSON snapshots) |
 | `0004` | documents (owner-scoped, UK owner+sha256), document_pages, document_chunks, document_facts |
 | `0003` | India market: `instruments` table; `companies.market` (existing rows backfilled `US`), `companies.isin` (unique, nullable), `companies.cik` nullable, `companies.ticker` → 30 chars and unique per (market, ticker); `financial_periods.basis` (default `unspecified`), unique on (company, fiscal_year, fiscal_period, basis). Downgrade deletes IN rows only (0002 cannot represent them). |
 
@@ -970,6 +975,36 @@ sequenceDiagram
   `ai_rate_limited`; other API/network errors → 502 `ai_unavailable`.
 - Answers are not persisted (Phase 6 reports re-run them on request).
 
+### 12.1 Research reports and export (Phase 6)
+
+`POST /reports {ticker, market?, exchange?, basis?, include_ai?, title?}` (compute rate limit;
+`include_ai` also consumes the per-user AI budget and needs the API key, else 503) builds an
+**immutable snapshot** (`research_reports.content`, JSON with Decimals as strings) via
+`services/reports.py`. Sections, each with figures/tables labelled by provenance:
+
+| Section | Content | Provenance |
+|---|---|---|
+| Company and listings | name, ticker, ISIN (or "not provided"), per-exchange listings | market |
+| Market data (EOD) | latest close of the resolved listing (+ stale note), 1-year raw price change | market / calculated |
+| Financial statements | up to 5 fiscal years of one basis, ₹ crore, "—" = not reported | reported |
+| Ratios | latest FY ratios with formulas; missing inputs named | calculated |
+| Valuation multiples | from the valuation snapshot, with its issues | calculated |
+| Corporate actions | latest 12 | reported |
+| Figures from uploaded reports | **verified** extracted facts only, with page and quote | extracted |
+| Your saved DCF valuations | latest 5 (WACC, terminal, value per share) | assumption |
+| AI summary (cited) | fixed question answered via §12 with grounding status and sources | ai_explanation |
+
+A section without data is kept with `status = unavailable` and the reason (e.g. a dual-listed
+company without `exchange` → market section unavailable rather than a guessed listing).
+
+Exports: `GET /reports/{id}/export?format=json|md|html|csv` with `Content-Disposition:
+attachment` and `X-Content-Type-Options: nosniff`. HTML is self-contained, every value escaped,
+and carries `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` so the
+downloaded file cannot run scripts; it is print-ready ("print to PDF" — no server-side PDF
+renderer). CSV text cells beginning with `= + - @ \t \r` are prefixed with `'` (formula
+injection); the numeric `value` column stays a plain decimal. Indian digit grouping
+(`12,34,56,789.00`) is applied by `reports/render.py`.
+
 ## 13. Authentication, authorization, security
 
 Implemented:
@@ -1003,6 +1038,10 @@ Implemented:
 limit, owner-scoped storage of extracted text only (no file bytes), per-user upload rate limit
 and document quota. Upload text is untrusted data: it is only ever placed in citable document
 blocks, never in the system prompt.
+
+**Exports:** HTML report downloads are escaped and script-blocked by CSP; CSV exports are
+protected against formula injection; downloads use `Content-Disposition: attachment` +
+`nosniff`.
 
 **Browser session:** the SPA keeps the FinSight access token in memory mirrored to
 `sessionStorage` (cleared when the tab closes; a 401 clears it). No provider keys exist in the

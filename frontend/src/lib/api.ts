@@ -73,3 +73,30 @@ export function query(params: Record<string, string | number | null | undefined>
   const text = search.toString();
   return text ? `?${text}` : "";
 }
+
+/** Download an authenticated file response and hand it to the browser as a file. */
+export async function apiDownload(path: string): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  }).catch(() => {
+    throw new ApiError(0, "network_error", "Unable to reach the FinSight API", null);
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as ErrorEnvelope | null;
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "http_error",
+      body?.error?.message ?? `Download failed with status ${response.status}`,
+      response.headers.get("x-request-id"),
+    );
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "finsight-report";
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
