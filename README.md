@@ -1,14 +1,15 @@
 # FinSight — AI-Powered Financial Intelligence Platform
 
-FinSight is a modular platform for company research: financial statement analysis, ratio
-calculations, DCF and comparable-company valuation, scenario forecasting, annual-report
-intelligence, and an AI research assistant that cites its sources.
+FinSight is a modular platform for researching **Indian listed companies (NSE and BSE)**:
+financial statement analysis, ratio calculations, market multiples, DCF and comparable-company
+valuation, scenario forecasting, and (planned) an AI research assistant that cites its sources.
 
-> **Status: Phase 3 (backend APIs).** A tested calculation engine (ratios, WACC, DCF with
-> sensitivity, bull/base/bear forecasts, comparable companies), user accounts with JWT auth,
-> SEC EDGAR ingestion of annual 10-K financials, watchlists and saved valuations — all via the
-> REST API. The web UI for these arrives in Phase 4. See the feature matrix in
-> [`SYSTEM_FLOW.md`](SYSTEM_FLOW.md).
+> **Status: India-first, free data only.** Company search with NSE/BSE listing selection,
+> end-of-day prices and charts, corporate actions, annual and quarterly statements
+> (consolidated/standalone), ratios and a valuation snapshot, in the API and a web UI.
+> It runs offline by default on clearly labelled **demo** data. Real NSE/BSE end-of-day data
+> comes from the free, keyless Tej API. US companies via SEC EDGAR remain available as an
+> optional market. See the feature matrix in [`SYSTEM_FLOW.md`](SYSTEM_FLOW.md).
 
 ## Stack
 
@@ -18,6 +19,7 @@ intelligence, and an AI research assistant that cites its sources.
 | Backend | Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic |
 | Database | PostgreSQL 17 |
 | AI | Claude API via a backend-only adapter (Phase 5) |
+| Market data | Tej API (free, keyless EOD), optional yfinance, built-in demo provider; SEC EDGAR (optional US) |
 | Testing | pytest, Vitest, React Testing Library, Playwright (Phase 4) |
 | Infra | Docker Compose, GitHub Actions |
 
@@ -54,15 +56,31 @@ npm ci
 npm run dev                                  # http://localhost:5173 (proxies /api → :8000)
 ```
 
-### Loading real financial data (SEC EDGAR)
+### Data providers (all ₹0, no keys needed)
 
-Set `FINSIGHT_SEC_USER_AGENT` to something like `FinSight you@example.com` (SEC requires
-contact info), then either call `POST /api/v1/companies/{ticker}/ingest` with a bearer token or:
+| Setting | Values | Default |
+|---|---|---|
+| `FINSIGHT_MARKET_DATA_PROVIDER` | `demo` (synthetic, offline) · `tej` (free keyless NSE/BSE end-of-day data) | `demo` |
+| `FINSIGHT_FUNDAMENTALS_PROVIDER` | `demo` · `yfinance` (optional, unofficial, **personal use only**) · `none` | `demo` |
+
+With the defaults, sign up in the UI and search “demo”. To use real NSE/BSE data:
 
 ```bash
-.venv/Scripts/python -m app.cli sync-companies     # company directory for search
-.venv/Scripts/python -m app.cli ingest AAPL MSFT   # annual financials
+export FINSIGHT_MARKET_DATA_PROVIDER=tej
+.venv/Scripts/python -m app.cli sync-instruments      # NSE + BSE directory from the latest snapshot
+# optional statements via Yahoo Finance (personal use only):
+.venv/Scripts/pip install -e ".[yfinance]"
+export FINSIGHT_FUNDAMENTALS_PROVIDER=yfinance
+.venv/Scripts/python -m app.cli ingest RELIANCE TCS
 ```
+
+Prices are end-of-day (not real-time) and unadjusted. Shareholding, announcements and intraday
+prices have no free source and are reported as unavailable. Read the licensing notes in
+`SYSTEM_FLOW.md` §16 before any commercial use.
+
+**Optional US market (SEC EDGAR):** set `FINSIGHT_SEC_USER_AGENT` (e.g. `FinSight
+you@example.com`), then `python -m app.cli sync-companies` and
+`python -m app.cli ingest --market US AAPL`, or call the API with `?market=US`.
 
 Try the API at http://localhost:8000/docs: register, log in, and click *Authorize* with the token.
 
