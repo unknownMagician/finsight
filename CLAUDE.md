@@ -59,6 +59,5 @@ npm run build    # tsc --noEmit + vite build
 ## Phase roadmap
 
 0 inspection & docs (✅) · 1 foundation (✅) · 2 financial domain engine (✅) · 3 APIs, auth, persistence (✅) ·
-India-first migration, free providers (✅) · 4 frontend workspace (🟡 research page done; calculators,
-watchlists UI pending) · 5 annual reports + Claude with citations · 6 reports & export ·
+India-first migration, free providers (✅) · 4 frontend workspace (✅) · 5 annual reports + Claude with citations · 6 reports & export ·
 7 verification & security audit.

@@ -59,19 +59,38 @@ Provider verification (docs, free limits, terms, live check) is recorded in §7.
 | F1 | US company directory, search, profile (SEC) | ✅ API (optional, `market=US`) | 3 | `tests/test_companies_api.py` |
 | F1 | SEC EDGAR ingestion (annual 10-K, US-GAAP) | ✅ API/CLI (optional US) | 3 | `tests/test_edgar.py`; manual live smoke test 2026-10-15 |
 | F2 | Statement models + ratio engine (+ ROCE, net income growth, basis guard) | ✅ engine · ✅ API · ✅ UI (IN) | 2, 3, IN | `tests/domain/test_ratios.py`, `tests/test_companies_api.py`, `test_india_api.py` |
-| F3 | DCF + WACC + sensitivity | ✅ engine · ✅ API · ⏳ UI (4) | 2, 3 | `tests/domain/test_dcf.py`, `test_wacc.py`, `tests/test_calculations_api.py` |
-| F4 | Comparable companies | ✅ engine · ✅ API (user-supplied peer metrics) · ⏳ UI (4) | 2, 3 | `tests/domain/test_comps.py`, `tests/test_calculations_api.py` |
-| F5 | Forecast (bull/base/bear) | ✅ engine · ✅ API · ⏳ UI (4) | 2, 3 | `tests/domain/test_forecast.py`, `tests/test_calculations_api.py` |
-| F5 | Saved DCF valuations (owner-scoped, market-aware) | ✅ API · ⏳ UI (4) | 3 | `tests/test_valuations_api.py`, `test_india_api.py` |
+| F3 | DCF + WACC + sensitivity | ✅ engine · ✅ API · ✅ UI | 2, 3, 4 | `tests/domain/test_dcf.py`, `test_wacc.py`, `tests/test_calculations_api.py` |
+| F4 | Comparable companies | ✅ engine · ✅ API · ✅ UI (peers from FinSight valuation snapshots) | 2, 3, 4 | `tests/domain/test_comps.py`, `tests/test_calculations_api.py` |
+| F5 | Forecast (bull/base/bear) | ✅ engine · ✅ API · ✅ UI | 2, 3, 4 | `tests/domain/test_forecast.py`, `tests/test_calculations_api.py` |
+| F5 | Saved DCF valuations (owner-scoped, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_valuations_api.py`, `test_india_api.py` |
 | F6 | Annual report PDF upload & fact extraction | ⏳ | 5 | — |
 | F7 | AI research assistant with citations | ⏳ | 5 | — (no AI code exists yet; nothing to migrate) |
 | F8 | Research report generation & export | ⏳ | 6 | — |
-| F9 | Watchlists (owner-scoped CRUD, market-aware) | ✅ API · ⏳ UI (4) | 3 | `tests/test_watchlists_api.py`, `test_india_api.py::test_indian_watchlist_and_valuation_link` |
+| F9 | Watchlists (owner-scoped CRUD, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_watchlists_api.py`, `test_india_api.py::test_indian_watchlist_and_valuation_link` |
 | S1 | Authentication (Argon2id + JWT) & resource-level authorization | ✅ API · ✅ UI sign-in | 3, 4 | `tests/test_auth_api.py`, `test_security.py`, cross-user tests; frontend redirect test |
 | S2 | Rate limiting (in-process) incl. market-data scope | ✅ single process · ⏳ shared store for multi-replica | 3 | `tests/test_security.py`, `test_india_api.py::test_market_data_rate_limit` |
 | S3 | Provider response cache (in-process TTL) | ✅ single process | IN | `test_providers_india.py::test_ttl_cache_expiry_eviction_and_errors`, cached flag in API tests |
 
 ---
+
+### 1.1 Frontend workspace (Phase 4)
+
+Routes (`src/app/routes.tsx`; all except `/` and `/login` require sign-in, pages are
+lazy-loaded): `/` search · `/login` · `/companies/:ticker?exchange=` research page ·
+`/calculators?ticker=` DCF (+ sensitivity grid, save), WACC, forecast, comparables ·
+`/watchlists` · `/valuations`.
+
+Rules the UI follows:
+- All requests go through `apiFetch` inside TanStack Query hooks in `src/features/<feature>/`;
+  TS interfaces mirror backend schemas (`features/*/types.ts`).
+- Numbers typed by the user are sent as **exact decimal strings** (`lib/decimal.ts`; percent →
+  fraction by shifting the decimal point, never via floats).
+- No default WACC, risk-free rate, ERP, tax or growth is pre-filled. The DCF equity bridge
+  (net debt, minority + preferred, shares) can be prefilled from the company's latest stored
+  annual statements, with a note naming the period, basis and provider. The DCF runs in
+  ₹ crore, so the share count is converted to crores (value per share stays in ₹).
+- Comparables take each company's metrics from its valuation snapshot (reported statements +
+  EOD close); unavailable metrics stay missing and are excluded with reasons by the engine.
 
 ## 2. Repository structure (actual)
 
@@ -134,6 +153,8 @@ Provider verification (docs, free limits, terms, live check) is recorded in §7.
         ├── components/       # DataBadges (freshness/demo/stale), States (panels, errors)
         ├── features/auth/    # sign-in/register, RequireAuth
         ├── features/companies/ # search, research page, panels, hooks, TS schema mirrors
+        ├── features/calculators/ # DCF, WACC, forecast, comps, saved-valuation hooks
+        ├── features/watchlists/, features/valuations/
         ├── features/health/  # SystemStatus
         └── pages/, test/
 ```
@@ -980,7 +1001,7 @@ journey with the deterministic demo provider pinned to 2026-10-19.
 
 Results on 2026-10-18 (local, SQLite): backend **239 passed, 1 skipped** (Postgres-only test;
 baseline before the migration: 179 passed, 1 skipped); ruff, ruff format, mypy clean. Frontend
-**17 tests passed** (baseline 8); eslint clean; `npm run build` passes (company page lazy-loaded).
+**26 tests passed** after Phase 4 (baseline 8); eslint clean; `npm run build` passes (company page lazy-loaded).
 
 Container start-up: backend runs `alembic upgrade head` then `uvicorn`. Compose waits for
 `db` healthy → `backend` healthy (`/health/ready`) → `frontend`.

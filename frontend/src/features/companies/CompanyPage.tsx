@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { Badge, ProviderBadge } from "../../components/DataBadges";
 import { ErrorState, Loading, Toggle, Unavailable } from "../../components/States";
 import { RatiosPanel, ValuationPanel } from "./AnalysisPanels";
+import { useAddToWatchlist, useWatchlists } from "../watchlists/api";
 import { useCompany, useFinancials } from "./api";
 import { CorporateActionsPanel } from "./CorporateActionsPanel";
 import { DataSources } from "./DataSources";
@@ -20,6 +21,27 @@ function chooseExchange(company: CompanyOut, requested: string | null): Exchange
   if (active.length === 1 && active[0]) return active[0].exchange;
   if (company.instruments.length === 1 && company.instruments[0]) return company.instruments[0].exchange;
   return null;
+}
+
+function AddToWatchlist({ ticker }: { ticker: string }) {
+  const watchlists = useWatchlists();
+  const add = useAddToWatchlist();
+  if (!watchlists.data?.length) return null;
+  return (
+    <select
+      aria-label="Add to watchlist"
+      value=""
+      onChange={(e) => e.target.value && add.mutate({ id: e.target.value, ticker })}
+      className="rounded border border-slate-300 px-2 py-1 text-xs"
+    >
+      <option value="">{add.isSuccess ? "Added ✓" : "Add to watchlist…"}</option>
+      {watchlists.data.map((w) => (
+        <option key={w.id} value={w.id}>
+          {w.name}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 export function CompanyPage() {
@@ -52,6 +74,15 @@ export function CompanyPage() {
           {instrument && instrument.listing_status !== "active" ? (
             <Badge className="bg-amber-100 text-amber-900">Not traded in the latest session</Badge>
           ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Link
+            to={`/calculators?ticker=${encodeURIComponent(data.ticker)}`}
+            className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100"
+          >
+            Open valuation calculators
+          </Link>
+          <AddToWatchlist ticker={data.ticker} />
         </div>
         {instrument?.former_symbols.length ? (
           <p className="text-xs text-slate-500">Formerly: {instrument.former_symbols.join(", ")}</p>

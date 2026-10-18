@@ -12,6 +12,13 @@ export function Layout() {
             FinSight
           </NavLink>
           <span className="text-xs text-slate-500">India · NSE / BSE</span>
+          {token ? (
+            <div className="flex gap-4 text-sm text-slate-700">
+              <NavLink to="/calculators">Calculators</NavLink>
+              <NavLink to="/watchlists">Watchlists</NavLink>
+              <NavLink to="/valuations">Valuations</NavLink>
+            </div>
+          ) : null}
           <div className="ml-auto">
             {token ? (
               <button type="button" onClick={logout} className="text-sm text-slate-600 underline">

@@ -55,8 +55,10 @@ export function useFinancials(
   ticker: string,
   periodType: "annual" | "quarterly",
   basis: ReportingBasis | null,
+  enabled = true,
 ) {
   return useQuery({
+    enabled: enabled && ticker !== "",
     queryKey: ["companies", ticker, "financials", periodType, basis],
     queryFn: () =>
       apiFetch<FinancialsOut>(
