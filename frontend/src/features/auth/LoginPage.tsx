@@ -14,7 +14,8 @@ export function LoginPage() {
   const [params] = useSearchParams();
   const action = mode === "login" ? login : register;
   const next = params.get("next");
-  const destination = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  // Only same-app paths: no scheme-relative ("//host") or backslash ("/\host") forms.
+  const destination = next && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/";
 
   function submit(event: FormEvent) {
     event.preventDefault();

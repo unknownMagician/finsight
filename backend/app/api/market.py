@@ -82,7 +82,7 @@ def market_status(
 def sync_directory(_: CurrentUser, db: DbSession, provider: MarketProvider) -> DirectorySyncOut:
     """Refresh the Indian instrument directory from the market-data provider's latest snapshot."""
     try:
-        report = instrument_service.sync_directory(db, provider)
+        report = instrument_service.sync_directory(db, provider, respect_cooldown=True)
     except ProviderError:
         raise AppError(
             "provider_unavailable", "The market-data provider is unavailable", 502

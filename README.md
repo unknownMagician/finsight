@@ -4,9 +4,11 @@ FinSight is a modular platform for researching **Indian listed companies (NSE an
 financial statement analysis, ratio calculations, market multiples, DCF and comparable-company
 valuation, scenario forecasting, and (planned) an AI research assistant that cites its sources.
 
-> **Status: India-first, free data only.** Company search with NSE/BSE listing selection,
-> end-of-day prices and charts, corporate actions, annual and quarterly statements
-> (consolidated/standalone), ratios and a valuation snapshot, in the API and a web UI.
+> **Status: all roadmap phases (0–7) implemented.** India-first, free market data only:
+> company search with NSE/BSE listing selection, end-of-day prices and charts, corporate actions,
+> annual and quarterly statements (consolidated/standalone), ratios, valuation multiples, DCF /
+> WACC / forecast / comparables calculators, watchlists, annual-report uploads, an optional
+> Claude research assistant whose citations are verified, and exportable research reports.
 > It runs offline by default on clearly labelled **demo** data. Real NSE/BSE end-of-day data
 > comes from the free, keyless Tej API. US companies via SEC EDGAR remain available as an
 > optional market. See the feature matrix in [`SYSTEM_FLOW.md`](SYSTEM_FLOW.md).
@@ -18,9 +20,9 @@ valuation, scenario forecasting, and (planned) an AI research assistant that cit
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, React Router, TanStack Query, Recharts |
 | Backend | Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic |
 | Database | PostgreSQL 17 |
-| AI | Claude API via a backend-only adapter (Phase 5) |
+| AI | Claude API (`claude-opus-5-5`) via a backend-only adapter; optional (`FINSIGHT_ANTHROPIC_API_KEY`) |
 | Market data | Tej API (free, keyless EOD), optional yfinance, built-in demo provider; SEC EDGAR (optional US) |
-| Testing | pytest, Vitest, React Testing Library, Playwright (Phase 4) |
+| Testing | pytest, Vitest, React Testing Library, Playwright E2E |
 | Infra | Docker Compose, GitHub Actions |
 
 ## Quick start (Docker)
@@ -93,6 +95,7 @@ Try the API at http://localhost:8000/docs: register, log in, and click *Authoriz
 
 # frontend/
 npm test && npm run lint && npm run build
+npx playwright install chromium && npm run e2e   # end-to-end against the real API (demo data)
 ```
 
 CI (`.github/workflows/ci.yml`) runs all of the above, the backend suite against PostgreSQL, and

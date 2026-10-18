@@ -5,7 +5,7 @@
 > this document disagree, the code is wrong or this document is stale — fix one of them in the
 > same change.
 
-- Last updated: 2026-10-18 (India-first migration with free (₹0) data providers; Phase 4 research UI)
+- Last updated: 2026-10-18 (Phases 4–7 complete: workspace UI, annual reports + AI with verified citations, reports & export, security audit)
 - Status legend: ✅ implemented & verified by tests · 🟡 implemented, not fully verified ·
   ⏳ planned (phase) · ❌ not started
 
@@ -43,7 +43,7 @@ Provider verification (docs, free limits, terms, live check) is recorded in §7.
 | F0 | Config via env, secrets masked, blank = unset | ✅ | 1, 3 | `backend/tests/test_config.py` |
 | F0 | Alembic migrations (0001 baseline … 0004 documents) | ✅ SQLite · ✅ CI Postgres (0003 verified in run 39107495409) | 1, 3, IN, 5 | `tests/test_migrations.py` (round-trip, drift guard, 0003 data preservation) |
 | F0 | Docker images | ✅ | 1 | Both images build in CI `docker` job |
-| F0 | Docker Compose stack (`up`) | 🟡 | 1 | `docker compose config` validated; full `up` not yet run (no local Docker daemon) |
+| F0 | Docker Compose stack (`up`) | ✅ via CI (no local Docker daemon) | 1, 7 | CI `docker` job: `compose up --wait`, smoke test through nginx (health, CSP, no-store, non-root containers) |
 | F0 | GitHub Actions CI | ✅ (Phase 3) · ⏳ not yet run on this change | 1 | Green on `main` and `dev/claude` up to `d29e0a6` |
 | IN1 | Indian instrument directory (NSE + BSE, ISIN grouping, renames, not-in-snapshot) | ✅ | IN | `tests/test_instruments.py`, `tests/test_providers_india.py`; live Tej smoke test 2026-10-18 (RELIANCE INE002A01018 → NSE + BSE) |
 | IN2 | Company search (name / symbol / ISIN, exchange filter) | ✅ API · ✅ UI | IN, 4 | `tests/test_india_api.py`, `frontend/src/features/companies/CompanyResearch.test.tsx` |
@@ -69,6 +69,8 @@ Provider verification (docs, free limits, terms, live check) is recorded in §7.
 | F9 | Watchlists (owner-scoped CRUD, market-aware) | ✅ API · ✅ UI | 3, 4 | `tests/test_watchlists_api.py`, `test_india_api.py::test_indian_watchlist_and_valuation_link` |
 | S1 | Authentication (Argon2id + JWT) & resource-level authorization | ✅ API · ✅ UI sign-in | 3, 4 | `tests/test_auth_api.py`, `test_security.py`, cross-user tests; frontend redirect test |
 | S2 | Rate limiting (in-process) incl. market-data scope | ✅ single process · ⏳ shared store for multi-replica | 3 | `tests/test_security.py`, `test_india_api.py::test_market_data_rate_limit` |
+| S4 | Security audit + automated route-auth guard, security headers, dependency audits | ✅ | 7 | §17; `tests/test_security_audit.py`; pip-audit / npm audit clean |
+| T1 | End-to-end browser test (Playwright) of the full journey | ✅ | 7 | `frontend/e2e/journey.spec.ts`, CI `e2e` job |
 | S3 | Provider response cache (in-process TTL) | ✅ single process | IN | `test_providers_india.py::test_ttl_cache_expiry_eviction_and_errors`, cached flag in API tests |
 
 ---
@@ -1115,15 +1117,18 @@ years).
 | Frontend lint/build | `npm run lint`, `npm run build` (includes `tsc`) | local, CI |
 | Full stack | `docker compose up --build` | local |
 | Image builds | `docker build ./backend`, `docker build ./frontend` | CI `docker` job |
-| E2E (Playwright) | ⏳ Phase 4 | — |
+| E2E (Playwright) | `npm run e2e` (in `frontend/`; starts the API via `backend/scripts/e2e_server.py` and `vite preview`) | local, CI `e2e` job |
+| Dependency audit | `pip-audit -r <(pip freeze)`, `npm audit` | manual (2026-10-18: clean) |
 
 CI needs no API keys and no internet for tests: Tej is exercised with `httpx.MockTransport`,
 yfinance with fakes (the library is an optional extra and is not installed in CI), and the API
 journey with the deterministic demo provider pinned to 2026-10-19.
 
-Results on 2026-10-18 (local, SQLite): backend **239 passed, 1 skipped** (Postgres-only test;
-baseline before the migration: 179 passed, 1 skipped); ruff, ruff format, mypy clean. Frontend
-**26 tests passed** after Phase 4 (baseline 8); eslint clean; `npm run build` passes (company page lazy-loaded).
+Results on 2026-10-18 after Phase 7 (local, SQLite): backend **279 passed, 1 skipped**
+(Postgres-only test; baseline before the India migration: 179 passed, 1 skipped); ruff, ruff
+format, mypy clean. Frontend **35 tests passed** (baseline 8); eslint clean; `npm run build`
+passes (pages lazy-loaded). E2E **1 passed**. CI additionally runs the backend suite on
+PostgreSQL and the Compose smoke test.
 
 Container start-up: backend runs `alembic upgrade head` then `uvicorn`. Compose waits for
 `db` healthy → `backend` healthy (`/health/ready`) → `frontend`.
@@ -1159,3 +1164,63 @@ Known limitations:
 - The live Claude integration is verified by request/response-shape tests, not by a live call
   in this environment (no API key available here). The AI incurs Anthropic API costs when
   enabled; everything else stays ₹0.
+
+## 17. Verification & security audit (Phase 7, 2026-10-18)
+
+Scope: the whole repository at the Phase 6 commit (`f9fd94d`) — backend API, providers, AI
+adapter, uploads, exports, frontend, containers, CI. Method: dependency audits, an automated
+route-authorization guard, manual review of authN/authZ, input handling, output encoding,
+secrets, SSRF, rate limits and container configuration, and an end-to-end browser test.
+
+**Dependency audits** (2026-10-18): `pip-audit` over the installed backend environment — *no
+known vulnerabilities*; `npm audit` — *0 vulnerabilities*.
+
+**Findings and fixes**
+
+| # | Area | Finding | Severity | Fix | Verified by |
+|---|---|---|---|---|---|
+| A1 | nginx | No Content-Security-Policy on the SPA | Medium | Strict CSP (`default-src 'self'`, no inline scripts, `frame-ancestors 'none'`, `object-src 'none'`) + Permissions-Policy | CI compose smoke test checks the header |
+| A2 | nginx | `add_header` in `/assets/` silently dropped the server-level security headers there (nginx does not inherit `add_header` into a location that sets its own) | Low | Headers repeated in every location; `server_tokens off` | config review, CI smoke |
+| A3 | Frontend container | nginx ran as root | Low | `nginxinc/nginx-unprivileged` (uid 101, port 8080) | CI smoke asserts non-root uid for frontend and backend |
+| A4 | API responses | No `nosniff` / `no-store` / framing headers on API responses (authenticated JSON could be cached by intermediaries) | Low | Middleware adds `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` unless a route sets them | `tests/test_security_audit.py` |
+| A5 | Directory sync | Any authenticated user could trigger full upstream snapshot fetches (free-provider abuse) | Low | Global per-provider cooldown (10 min) on `POST /market/directory/sync` → 429 `sync_cooldown` + `Retry-After`; CLI unaffected | `test_india_api.py::test_market_status_and_directory_sync` |
+| A6 | Sign-in redirect | `next` accepted backslash forms (`/\host`) | Low | Only `/`-rooted paths without `//` or `\` | `Login.test.tsx` |
+| A7 | AI prompt injection | Uploaded report text could contain instructions | Medium (mitigated) | System prompts state document text is data, not instructions; documents are only ever passed as citable document blocks; all citations verified; figures without valid citations flagged; extracted facts verified against page text | `test_ai_units.py`, grounding tests |
+
+**Automated guards added**
+- `test_every_non_public_route_requires_authentication`: walks the OpenAPI document (every
+  mounted endpoint, 40+ operations) and asserts 401 `not_authenticated` without a token, except
+  the explicit public allow-list (health, register, login). A new unauthenticated route fails CI.
+- Forged/garbled JWTs rejected; status endpoints never contain the Anthropic key or JWT secret.
+- Owner isolation: cross-user tests for watchlists, valuations, documents (incl. AI calls never
+  made on another user's document), research questions, and reports.
+
+**Reviewed, no change needed:** SQL only via SQLAlchemy bound parameters and escaped `LIKE`;
+request models `extra="forbid"`; provider hosts fixed (no user-controlled URLs → no SSRF) and
+symbols validated before any outbound request; secrets only in backend settings (`SecretStr`)
+and never logged; 500s never echo exception text; HTML exports escaped with script-blocking CSP;
+CSV exports formula-injection safe; React renders no raw HTML (`dangerouslySetInnerHTML` unused);
+CORS uses an explicit origin list.
+
+**Residual risks / recommendations (not fixed)**
+- Access tokens live in `sessionStorage` (readable by script on XSS; CSP reduces the risk);
+  no refresh-token rotation or server-side revocation.
+- Rate limits, the provider cache and the sync cooldown are per process; use a shared store
+  (e.g. Redis) before running several replicas.
+- PDF parsing (pypdf) runs in the request with size/page limits and per-user rate limits but no
+  CPU time limit; a crafted PDF could be slow. Move extraction to a worker with a timeout before
+  public exposure.
+- Multipart bodies are parsed by Starlette before the size check; nginx's 25 MB cap is the
+  outer bound — keep the backend port private (Compose binds it to 127.0.0.1).
+- Backend Python dependencies are range-pinned without a lock file; add one (e.g. `uv lock`)
+  for reproducible builds.
+- No HSTS: TLS terminates outside this stack; add HSTS at the TLS terminator.
+- Registration reveals whether an email exists (409), accepted and rate-limited.
+- Third-party data terms (§16) must be cleared before commercial use.
+
+**End-to-end verification:** `frontend/e2e/journey.spec.ts` (Playwright, Chromium) runs the
+real API (fresh SQLite, migrations to head, demo providers, no AI key) behind the production
+build: sign-up → search → NSE listing → EOD quote with demo/freshness labels → BSE switch →
+fetch statements → consolidated/standalone toggle → ratios and multiples → DCF with prefilled
+bridge → save valuation → research report with provenance → Markdown download. Passed locally
+(1 test, 26.6 s) and runs in CI (`e2e` job).

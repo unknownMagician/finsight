@@ -12,6 +12,7 @@ Identity rules:
 
 import logging
 import threading
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
@@ -26,6 +27,10 @@ from app.providers.base import InstrumentListing, MarketDataProvider, ProviderEr
 logger = logging.getLogger("app.instruments")
 
 _sync_lock = threading.Lock()
+# Directory syncs fetch full exchange snapshots from a free provider; user-triggered syncs are
+# throttled globally per provider (the CLI bypasses this).
+SYNC_COOLDOWN_SECONDS = 600.0
+_last_sync: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -54,9 +59,23 @@ def _free_ticker(
     raise AppError("directory_conflict", f"cannot assign a ticker for {desired}", 500)
 
 
-def sync_directory(db: Session, provider: MarketDataProvider) -> SyncReport:
+def sync_directory(
+    db: Session, provider: MarketDataProvider, *, respect_cooldown: bool = False
+) -> SyncReport:
     with _sync_lock:
-        return _sync(db, provider)
+        if respect_cooldown:
+            elapsed = time.monotonic() - _last_sync.get(provider.name, float("-inf"))
+            if elapsed < SYNC_COOLDOWN_SECONDS:
+                wait = int(SYNC_COOLDOWN_SECONDS - elapsed) + 1
+                raise AppError(
+                    "sync_cooldown",
+                    "The directory was refreshed recently; try again later",
+                    429,
+                    headers={"Retry-After": str(wait)},
+                )
+        report = _sync(db, provider)
+        _last_sync[provider.name] = time.monotonic()
+        return report
 
 
 def _sync(db: Session, provider: MarketDataProvider) -> SyncReport:

@@ -1,4 +1,5 @@
-"""Request-ID and access-log middleware (pure ASGI, so it also wraps error responses)."""
+"""Request-ID, default security headers and access-log middleware (pure ASGI, so it also wraps
+error responses)."""
 
 import logging
 import re
@@ -12,6 +13,14 @@ from app.core.logging import request_id_var
 logger = logging.getLogger("app.access")
 
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# Defaults for every API response (a route may set its own value, which is kept).
+# no-store: responses carry user data and must not be cached by browsers or proxies.
+_DEFAULT_HEADERS = (
+    (b"x-content-type-options", b"nosniff"),
+    (b"cache-control", b"no-store"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+)
 
 
 class RequestContextMiddleware:
@@ -38,8 +47,10 @@ class RequestContextMiddleware:
             if message["type"] == "http.response.start":
                 status_code = message["status"]
                 headers = list(message.get("headers", []))
-                if not any(name.lower() == b"x-request-id" for name, _ in headers):
+                present = {name.lower() for name, _ in headers}
+                if b"x-request-id" not in present:
                     headers.append((b"x-request-id", request_id.encode()))
+                headers += [(n, v) for n, v in _DEFAULT_HEADERS if n not in present]
                 message["headers"] = headers
             await send(message)
 

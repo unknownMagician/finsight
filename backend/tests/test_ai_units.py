@@ -266,6 +266,7 @@ def test_answer_request_uses_citable_documents_and_fallbacks() -> None:
     }
     assert question == {"type": "text", "text": "What was revenue?"}
     assert "Never estimate" in kw["system"] and "output_config" not in kw
+    assert "data, not" in kw["system"]  # uploaded text cannot act as instructions
 
 
 def test_extract_request_uses_structured_output_without_citations() -> None:

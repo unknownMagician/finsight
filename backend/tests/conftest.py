@@ -92,7 +92,9 @@ def fake_provider() -> FakeProvider:
 @pytest.fixture
 def client(migrated: None, fake_provider: FakeProvider) -> Iterator[TestClient]:
     from app.main import create_app
+    from app.services import instruments
 
+    instruments._last_sync.clear()  # directory-sync cooldown is process-global
     app = create_app()
     app.state.provider = fake_provider
     # Indian market: deterministic demo data and a fixed "today" (IST).

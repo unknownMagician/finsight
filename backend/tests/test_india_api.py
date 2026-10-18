@@ -291,8 +291,10 @@ def test_market_status_and_directory_sync(client: TestClient, auth: dict[str, st
 
     r = client.post("/api/v1/market/directory/sync", headers=auth)
     assert r.status_code == 200 and r.json()["listings"] == 6
-    again = client.post("/api/v1/market/directory/sync", headers=auth).json()
-    assert again["companies_created"] == 0 and again["instruments_created"] == 0
+    # User-triggered syncs are throttled globally (idempotency: tests/test_instruments.py).
+    again = client.post("/api/v1/market/directory/sync", headers=auth)
+    assert again.status_code == 429 and again.json()["error"]["code"] == "sync_cooldown"
+    assert int(again.headers["Retry-After"]) > 0
 
 
 def test_indian_watchlist_and_valuation_link(
