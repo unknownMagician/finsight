@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Response, status
 
-from app.api.deps import ComputeRateLimit, CurrentUser, DbSession, parse_uuid
+from app.api.deps import ComputeRateLimit, CurrentUser, DbSession, parse_uuid, resolve_market
 from app.domain.dcf import DCFInputs
 from app.models import SavedValuation
 from app.schemas import SavedValuationCreate, SavedValuationOut
@@ -14,6 +14,7 @@ def _out(valuation: SavedValuation) -> SavedValuationOut:
         id=valuation.id,
         name=valuation.name,
         ticker=valuation.company.ticker if valuation.company else None,
+        market=valuation.company.market if valuation.company else None,
         method=valuation.method,
         engine_version=valuation.engine_version,
         inputs=DCFInputs.model_validate(valuation.inputs),
@@ -36,7 +37,9 @@ def list_valuations(user: CurrentUser, db: DbSession) -> list[SavedValuationOut]
 def save_valuation(
     user: CurrentUser, db: DbSession, body: SavedValuationCreate
 ) -> SavedValuationOut:
-    return _out(service.save(db, user, body.name, body.ticker, body.inputs))
+    return _out(
+        service.save(db, user, body.name, body.ticker, body.inputs, resolve_market(body.market))
+    )
 
 
 @router.get("/{valuation_id}", response_model=SavedValuationOut)

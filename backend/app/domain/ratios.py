@@ -16,7 +16,15 @@ from typing import Literal
 from pydantic import Field
 
 from app.domain.statements import FinancialPeriodData
-from app.domain.types import CurrencyCode, DomainModel, ReportingPeriod, Scale, ValueKind, rescale
+from app.domain.types import (
+    CurrencyCode,
+    DomainModel,
+    ReportingBasis,
+    ReportingPeriod,
+    Scale,
+    ValueKind,
+    rescale,
+)
 
 MetricUnit = Literal["ratio", "times", "currency"]
 MetricStatus = Literal["ok", "missing_inputs", "not_meaningful"]
@@ -39,6 +47,7 @@ class RatioReport(DomainModel):
     period: ReportingPeriod
     currency: CurrencyCode
     scale: Scale
+    basis: ReportingBasis = "unspecified"
     metrics: dict[str, MetricResult]
 
 
@@ -164,6 +173,8 @@ def compute_ratios(
             raise ValueError("prior period belongs to a different company")
         if prior.currency != data.currency:
             raise ValueError("prior period currency differs; convert currencies before comparing")
+        if prior.basis != data.basis:
+            raise ValueError("prior period reporting basis differs (consolidated vs standalone)")
         if prior.period.period_end >= data.period.period_end:
             raise ValueError("prior period must end before the current period")
 
@@ -247,6 +258,23 @@ def compute_ratios(
         ("net_income", inc.net_income),
         ("total_assets", avg_assets),
         note=f"total_assets: {avg_assets_note}",
+    )
+    capital_employed = (
+        bal.total_assets - bal.total_current_liabilities
+        if bal.total_assets is not None and bal.total_current_liabilities is not None
+        else None
+    )
+    m["return_on_capital_employed"] = _divide(
+        "Return on capital employed",
+        "operating_income / (total_assets - total_current_liabilities)",
+        "ratio",
+        ("operating_income", inc.operating_income),
+        ("capital_employed", capital_employed),
+        extra_inputs={
+            "total_assets": bal.total_assets,
+            "total_current_liabilities": bal.total_current_liabilities,
+        },
+        note="capital_employed: ending balance; operating_income is pre-tax EBIT",
     )
     m["asset_turnover"] = _divide(
         "Asset turnover",
@@ -348,11 +376,25 @@ def compute_ratios(
         if growth.value is not None:
             growth = growth.model_copy(update={"value": growth.value - 1})
         m["revenue_growth"] = growth
+        earnings_growth = _divide(
+            "Net income growth",
+            "net_income / prior_net_income - 1",
+            "ratio",
+            ("net_income", inc.net_income),
+            ("prior_net_income", p(prior.income.net_income)),
+            note="not meaningful when prior net income is zero or negative",
+        )
+        if earnings_growth.value is not None:
+            earnings_growth = earnings_growth.model_copy(
+                update={"value": earnings_growth.value - 1}
+            )
+        m["net_income_growth"] = earnings_growth
 
     return RatioReport(
         company=data.company,
         period=data.period,
         currency=data.currency,
         scale=data.scale,
+        basis=data.basis,
         metrics=m,
     )

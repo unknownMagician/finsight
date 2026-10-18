@@ -4,13 +4,15 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import auth, calculations, companies, health, valuations, watchlists
+from app.api import auth, calculations, companies, health, market, valuations, watchlists
+from app.core.cache import TTLCache
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.ratelimit import RateLimiter
 from app.core.security import validate_security_settings
+from app.services.market_data import today_ist
 
 API_PREFIX = "/api/v1"
 
@@ -29,6 +31,8 @@ def create_app() -> FastAPI:
         openapi_url=None if is_prod else "/openapi.json",
     )
     app.state.rate_limiter = RateLimiter()
+    app.state.market_cache = TTLCache(settings.market_data_cache_ttl_seconds)
+    app.state.today = today_ist
 
     app.add_middleware(
         CORSMiddleware,
@@ -44,7 +48,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     api = APIRouter(prefix=API_PREFIX)
-    for module in (health, auth, companies, calculations, watchlists, valuations):
+    for module in (health, auth, companies, market, calculations, watchlists, valuations):
         api.include_router(module.router)
     app.include_router(api)
     return app

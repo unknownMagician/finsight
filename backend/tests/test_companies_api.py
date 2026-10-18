@@ -9,6 +9,9 @@ from tests.fakes import FakeProvider
 
 API = "/api/v1/companies"
 
+# These suites exercise the optional US market (SEC EDGAR via the fake provider).
+pytestmark = pytest.mark.usefixtures("us_market")
+
 
 def ingest(client: TestClient, auth: dict[str, str], ticker: str = "SYNW") -> dict[str, object]:
     r = client.post(f"{API}/{ticker}/ingest", headers=auth)

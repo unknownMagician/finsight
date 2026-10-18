@@ -1,11 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Response, status
+from fastapi import APIRouter, Path, Query, Response, status
 
-from app.api.deps import CurrentUser, DbSession, parse_uuid
+from app.api.deps import CurrentUser, DbSession, parse_uuid, resolve_market
 from app.models import Watchlist
 from app.schemas import (
+    TICKER_PATTERN,
     CompanyOut,
+    Market,
     WatchlistCreate,
     WatchlistItemAdd,
     WatchlistOut,
@@ -15,7 +17,7 @@ from app.services import watchlists as service
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"])
 
-TickerPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9.\-]{1,20}$")]
+TickerPath = Annotated[str, Path(pattern=TICKER_PATTERN)]
 
 
 def _out(watchlist: Watchlist) -> WatchlistOut:
@@ -60,11 +62,27 @@ def delete_watchlist(user: CurrentUser, db: DbSession, watchlist_id: str) -> Res
 def add_item(
     user: CurrentUser, db: DbSession, watchlist_id: str, body: WatchlistItemAdd
 ) -> WatchlistOut:
-    return _out(service.add_company(db, user, parse_uuid(watchlist_id, "Watchlist"), body.ticker))
+    return _out(
+        service.add_company(
+            db,
+            user,
+            parse_uuid(watchlist_id, "Watchlist"),
+            body.ticker,
+            resolve_market(body.market),
+        )
+    )
 
 
 @router.delete("/{watchlist_id}/items/{ticker}", response_model=WatchlistOut)
 def remove_item(
-    user: CurrentUser, db: DbSession, watchlist_id: str, ticker: TickerPath
+    user: CurrentUser,
+    db: DbSession,
+    watchlist_id: str,
+    ticker: TickerPath,
+    market: Annotated[Market | None, Query()] = None,
 ) -> WatchlistOut:
-    return _out(service.remove_company(db, user, parse_uuid(watchlist_id, "Watchlist"), ticker))
+    return _out(
+        service.remove_company(
+            db, user, parse_uuid(watchlist_id, "Watchlist"), ticker, resolve_market(market)
+        )
+    )

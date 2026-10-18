@@ -10,6 +10,7 @@ the migrations themselves are exercised on every run.
 
 import os
 from collections.abc import Callable, Iterator
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -20,10 +21,13 @@ from fastapi.testclient import TestClient
 from app.core.config import get_settings
 from app.core.security import reset_security_caches
 from app.db.session import get_engine, get_sessionmaker
+from app.providers.demo import DemoMarketDataProvider
 from tests.fakes import FakeProvider
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 TEST_PASSWORD = "correct-horse-battery-staple"
+# A Monday: the demo provider's latest published trading day is then Friday 2026-10-16.
+DEMO_TODAY = date(2026, 10, 19)
 
 
 def _clear_caches() -> None:
@@ -53,9 +57,22 @@ def test_env(database_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
     monkeypatch.setenv("FINSIGHT_LOG_JSON", "false")
     monkeypatch.setenv("FINSIGHT_JWT_SECRET", "test-secret-" + "x" * 40)
     monkeypatch.delenv("FINSIGHT_SEC_USER_AGENT", raising=False)
+    for name in (
+        "FINSIGHT_DEFAULT_MARKET",
+        "FINSIGHT_MARKET_DATA_PROVIDER",
+        "FINSIGHT_FUNDAMENTALS_PROVIDER",
+    ):
+        monkeypatch.delenv(name, raising=False)
     _clear_caches()
     yield
     _clear_caches()
+
+
+@pytest.fixture
+def us_market(test_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run a test against the optional US (SEC EDGAR) market instead of the IN default."""
+    monkeypatch.setenv("FINSIGHT_DEFAULT_MARKET", "US")
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -78,6 +95,9 @@ def client(migrated: None, fake_provider: FakeProvider) -> Iterator[TestClient]:
 
     app = create_app()
     app.state.provider = fake_provider
+    # Indian market: deterministic demo data and a fixed "today" (IST).
+    app.state.demo_provider = DemoMarketDataProvider(lambda: DEMO_TODAY)
+    app.state.today = lambda: DEMO_TODAY
     with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client
     get_engine().dispose()

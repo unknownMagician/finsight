@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import AppError
 from app.models import User, Watchlist, WatchlistItem
-from app.services.companies import get_by_ticker
+from app.services.companies import Market, get_company
 
 MAX_WATCHLISTS_PER_USER = 20
 MAX_ITEMS_PER_WATCHLIST = 100
@@ -72,9 +72,11 @@ def delete(db: Session, owner: User, watchlist_id: uuid.UUID) -> None:
     db.commit()
 
 
-def add_company(db: Session, owner: User, watchlist_id: uuid.UUID, ticker: str) -> Watchlist:
+def add_company(
+    db: Session, owner: User, watchlist_id: uuid.UUID, ticker: str, market: Market = "US"
+) -> Watchlist:
     watchlist = get_owned(db, owner, watchlist_id)
-    company = get_by_ticker(db, ticker)
+    company = get_company(db, ticker, market)
     if any(item.company_id == company.id for item in watchlist.items):
         return watchlist  # idempotent
     if len(watchlist.items) >= MAX_ITEMS_PER_WATCHLIST:
@@ -85,9 +87,15 @@ def add_company(db: Session, owner: User, watchlist_id: uuid.UUID, ticker: str) 
     return get_owned(db, owner, watchlist_id)
 
 
-def remove_company(db: Session, owner: User, watchlist_id: uuid.UUID, ticker: str) -> Watchlist:
+def remove_company(
+    db: Session, owner: User, watchlist_id: uuid.UUID, ticker: str, market: Market = "US"
+) -> Watchlist:
     watchlist = get_owned(db, owner, watchlist_id)
-    remaining = [i for i in watchlist.items if i.company.ticker != ticker.upper()]
+    remaining = [
+        i
+        for i in watchlist.items
+        if not (i.company.ticker == ticker.upper() and i.company.market == market)
+    ]
     if len(remaining) == len(watchlist.items):
         raise AppError("not_found", f"{ticker.upper()} is not in this watchlist", 404)
     watchlist.items = remaining

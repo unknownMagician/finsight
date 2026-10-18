@@ -23,10 +23,8 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
-
-from app.domain.statements import BalanceSheet, CashFlowStatement, IncomeStatement
 from app.providers.base import IngestedLineItem, IngestedPeriod, StatementName
+from app.providers.normalize_common import validate_statement_items as _validate_statement
 
 ANNUAL_FORMS = frozenset({"10-K", "10-K/A"})
 MIN_YEAR_DAYS, MAX_YEAR_DAYS = 350, 380
@@ -109,11 +107,6 @@ MAPPINGS: tuple[FieldMapping, ...] = (
     FieldMapping("cash_flow", "share_repurchases", ("PaymentsForRepurchaseOfCommonStock",)),
 )
 
-_STATEMENT_MODELS: dict[StatementName, type[BaseModel]] = {
-    "income": IncomeStatement,
-    "balance": BalanceSheet,
-    "cash_flow": CashFlowStatement,
-}
 _INSTANT_STATEMENTS: frozenset[StatementName] = frozenset({"balance"})
 
 
@@ -213,32 +206,6 @@ def _value_for(
         if candidates:
             return max(candidates, key=lambda f: f.filed), concept
     return None
-
-
-def _validate_statement(
-    statement: StatementName,
-    items: list[IngestedLineItem],
-    label: str,
-    warnings: list[str],
-) -> list[IngestedLineItem]:
-    """Drop items that the domain model rejects (e.g. negative capex), with a warning."""
-    model = _STATEMENT_MODELS[statement]
-    kept = {i.item: i for i in items}
-    for _ in range(len(items) + 1):
-        try:
-            model.model_validate({k: v.value for k, v in kept.items()})
-            return list(kept.values())
-        except ValidationError as exc:
-            bad = {str(err["loc"][0]) for err in exc.errors() if err["loc"]}
-            for name in bad & kept.keys():
-                warnings.append(
-                    f"{label}: dropped {statement}.{name}={kept[name].value} "
-                    f"({kept[name].source_concept}) - violates domain constraints"
-                )
-                del kept[name]
-            if not bad & kept.keys() and bad:
-                break
-    return list(kept.values())
 
 
 def normalize_companyfacts(doc: dict[str, Any], *, max_years: int = 10) -> NormalizedFinancials:

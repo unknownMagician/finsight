@@ -44,8 +44,25 @@ class Settings(BaseSettings):
     rate_limit_auth_per_minute: int = Field(default=10, ge=1)
     rate_limit_compute_per_minute: int = Field(default=60, ge=1)
     rate_limit_ingest_per_hour: int = Field(default=20, ge=1)
+    rate_limit_market_data_per_minute: int = Field(default=120, ge=1)
 
-    # --- SEC EDGAR provider ---
+    # --- Market data (India-first) ---
+    # Default market for company routes that do not pass ?market=.
+    default_market: Literal["IN", "US"] = "IN"
+    # Prices, instrument directory and corporate actions. "demo" is deterministic synthetic data
+    # (no network); "tej" is the free, keyless Tej API (NSE/BSE end-of-day bhavcopy data).
+    market_data_provider: Literal["demo", "tej"] = "demo"
+    # Financial statements for Indian companies. "demo" is synthetic; "yfinance" is the
+    # unofficial Yahoo Finance library (optional extra, Yahoo terms: personal use only);
+    # "none" disables statement ingestion for the Indian market.
+    fundamentals_provider: Literal["demo", "yfinance", "none"] = "demo"
+    market_data_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    # End-of-day data changes once per trading day, so responses are cached in-process.
+    market_data_cache_ttl_seconds: int = Field(default=900, ge=0, le=24 * 3600)
+    # A latest bar older than this many calendar days is flagged ``stale``.
+    market_data_stale_after_days: int = Field(default=4, ge=1, le=30)
+
+    # --- SEC EDGAR provider (optional, US market only) ---
     # SEC requires a descriptive User-Agent with contact info, e.g. "FinSight admin@example.com".
     # Ingestion is refused until this is set.
     sec_user_agent: str | None = None

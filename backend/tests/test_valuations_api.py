@@ -1,11 +1,15 @@
 from collections.abc import Callable
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.test_calculations_api import DCF
 
 API = "/api/v1/valuations"
+
+# These suites exercise the optional US market (SEC EDGAR via the fake provider).
+pytestmark = pytest.mark.usefixtures("us_market")
 
 
 def test_save_list_get_delete(client: TestClient, auth: dict[str, str]) -> None:

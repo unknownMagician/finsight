@@ -85,6 +85,7 @@ EXPECTED_SINGLE_PERIOD: dict[str, Decimal] = {
     "interest_coverage": D(10),
     "free_cash_flow": D(170),
     "fcf_margin": D("0.17"),
+    "return_on_capital_employed": D(200) / D(1750),  # EBIT / (assets - current liabilities)
 }
 
 
@@ -185,3 +186,28 @@ def test_prior_validation(current: FinancialPeriodData) -> None:
 
 def test_all_metrics_are_labelled_calculated(current: FinancialPeriodData) -> None:
     assert {m.kind.value for m in compute_ratios(current).metrics.values()} == {"calculated"}
+
+
+def test_net_income_growth_and_its_edge_cases(current: FinancialPeriodData) -> None:
+    prior = period_data(2024, income={**FULL_INCOME, "net_income": D(108)}, balance=FULL_BALANCE)
+    growth = compute_ratios(current, prior).metrics["net_income_growth"]
+    assert growth.status == "ok" and approx(growth.value, D(135) / D(108) - 1)
+
+    prior_loss = period_data(2024, income={**FULL_INCOME, "net_income": D(-50)})
+    turnaround = compute_ratios(current, prior_loss).metrics["net_income_growth"]
+    assert turnaround.status == "not_meaningful" and turnaround.value is None
+
+
+def test_capital_employed_needs_both_inputs() -> None:
+    data = period_data(income=FULL_INCOME, balance={"total_assets": D(2000)})
+    roce = compute_ratios(data).metrics["return_on_capital_employed"]
+    assert roce.status == "missing_inputs" and "total_current_liabilities" in roce.missing
+
+
+def test_consolidated_and_standalone_are_never_mixed(current: FinancialPeriodData) -> None:
+    consolidated = current.model_copy(update={"basis": "consolidated"})
+    standalone = period_data(2024, income=FULL_INCOME).model_copy(update={"basis": "standalone"})
+    with pytest.raises(ValueError, match="basis"):
+        compute_ratios(consolidated, standalone)
+    report = compute_ratios(consolidated, standalone.model_copy(update={"basis": "consolidated"}))
+    assert report.basis == "consolidated"
