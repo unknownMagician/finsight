@@ -108,8 +108,9 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsS http://127.0.0.1:8080/api/v1/health/ready | grep -q '"status":"ok"'
-          curl -fsSI http://127.0.0.1:8080/ | grep -qi "content-security-policy: default-src 'self'"
-          curl -fsSI http://127.0.0.1:8080/api/v1/health/live | grep -qi "cache-control: no-store"
+          # GET with headers dumped (API routes do not accept HEAD).
+          curl -fsS -o /dev/null -D - http://127.0.0.1:8080/ | grep -qi "content-security-policy: default-src 'self'"
+          curl -fsS -o /dev/null -D - http://127.0.0.1:8080/api/v1/health/live | grep -qi "cache-control: no-store"
           test "$(docker compose exec -T frontend id -u)" != "0"
           test "$(docker compose exec -T backend id -u)" != "0"
       - name: Logs on failure
